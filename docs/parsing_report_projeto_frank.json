@@ -1,0 +1,784 @@
+{
+  "total_pages": 53,
+  "pages": [
+    {
+      "page": 1,
+      "raw_char_count": 88,
+      "clean_char_count": 63,
+      "clean_line_count": 3,
+      "tables_found": 1,
+      "table_sizes": [
+        "4rows x 3cols"
+      ],
+      "first_200_chars": "Confidential Information Memorandum\nProjeto Frank\nMarço de 2026",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 2,
+      "raw_char_count": 4199,
+      "clean_char_count": 4174,
+      "clean_line_count": 31,
+      "tables_found": 1,
+      "table_sizes": [
+        "2rows x 2cols"
+      ],
+      "first_200_chars": "Disclaimer\n▪ Esta apresentação (“Apresentação”) foi preparada pela Value Capital Assessoria Financeira Ltda. (“Value Capital Advisors”) com base em pesquisas de mercado,\ninformações públicas, relatóri",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 3,
+      "raw_char_count": 936,
+      "clean_char_count": 911,
+      "clean_line_count": 14,
+      "tables_found": 1,
+      "table_sizes": [
+        "2rows x 2cols"
+      ],
+      "first_200_chars": "Informações Gerais\n• Value Capital Assessoria Financeira Ltda. (\"Value Capital Advisors\") foi contratado como assessor financeiro exclusivo em relação a umatransação estratégica potencial\nenvolvendo o",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 4,
+      "raw_char_count": 216,
+      "clean_char_count": 191,
+      "clean_line_count": 8,
+      "tables_found": 2,
+      "table_sizes": [
+        "2rows x 2cols",
+        "1rows x 3cols"
+      ],
+      "first_200_chars": "Agenda\n# Conteúdo Página\n1 Por que investir no Grupo Mercadão dos Óculos? 5\n2 Mercado Óptico 11\n3 Mercadão dos Óculos At a Glance 27\n4 Operações da Companhia 31\n5 Informações Financeiras 42\n4",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 5,
+      "raw_char_count": 89,
+      "clean_char_count": 89,
+      "clean_line_count": 6,
+      "tables_found": 1,
+      "table_sizes": [
+        "5rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\n#006594\n#B6222A\n#FFD54F\n1. Por que investir no Grupo Mercadão dos Óculos?",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 6,
+      "raw_char_count": 1195,
+      "clean_char_count": 1170,
+      "clean_line_count": 30,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nPor que investir no Grupo Mercadão dos Óculos (MDO)?\n#006594\n#B6222A\n#FFD54F\n01 A indústria óptica apresenta perspectivas de crescimento devido a fatores\ndemográficos, atingindo USD 17",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 7,
+      "raw_char_count": 1576,
+      "clean_char_count": 1551,
+      "clean_line_count": 37,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nMercado óptico em expansão com varejo brasileiro fragmentado e oportunidades para integração e\n#009AD0\ncrescimento exponencial\n#006594\n#B6222A\nA indústria óptica global e nacional apresentam p",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 8,
+      "raw_char_count": 2056,
+      "clean_char_count": 2031,
+      "clean_line_count": 38,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nMDO apresenta histórico consolidado de atuação no mercado nacional, com +600 lojas em operação,\n#009AD0\nsustentado pela expansão via franquias e por um ecossistema integrado muito atrativo\n#00",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 9,
+      "raw_char_count": 1545,
+      "clean_char_count": 1520,
+      "clean_line_count": 40,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nO ecossistema MDO com geração recorrente de caixa, uma rede nacional, múltiplas avenidas de\n#009AD0\ncrescimento e opcionalidade estratégica, sustenta a liderança do Grupo com financials sólido",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 10,
+      "raw_char_count": 909,
+      "clean_char_count": 884,
+      "clean_line_count": 24,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nA Transação envolve um investimento na Companhia Mercadão dos Óculos, visando acelerar a\n#009AD0\nconsolidação do Grupo como plataforma líder e referência nacional no varejo óptico brasileiro\n#",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 11,
+      "raw_char_count": 60,
+      "clean_char_count": 60,
+      "clean_line_count": 7,
+      "tables_found": 1,
+      "table_sizes": [
+        "5rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\n#006594\n#B6222A\n#FFD54F\n2. Mercado Óptico\n11",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 12,
+      "raw_char_count": 71,
+      "clean_char_count": 71,
+      "clean_line_count": 7,
+      "tables_found": 1,
+      "table_sizes": [
+        "5rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\n#006594\n#B6222A\n#FFD54F\n2.1. Mercado Óptico - Global\n12",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 13,
+      "raw_char_count": 1676,
+      "clean_char_count": 1651,
+      "clean_line_count": 39,
+      "tables_found": 4,
+      "table_sizes": [
+        "6rows x 3cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "4rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nMercado crescente de óculos previstas pelos próximos 20 anos, devido aumento de casos de\n#009AD0\ndoenças oculares, envelhecimento populacional, potencializado pelos hábitos atuais da sociedade",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 14,
+      "raw_char_count": 585,
+      "clean_char_count": 560,
+      "clean_line_count": 37,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "2rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\nO mercado óptico global tem um potencial de atingir USD 173 Bn até 2029, com Europa e Estados\n#009AD0\nUnidos representando mais da metade do faturamento global\n#006594\n#B6222A\n#FFD54F\nFaturame",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 15,
+      "raw_char_count": 1410,
+      "clean_char_count": 1385,
+      "clean_line_count": 38,
+      "tables_found": 17,
+      "table_sizes": [
+        "6rows x 3cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nNos Estados Unidos e na Europa, mais da metade da população utiliza óculos e mais de 125 MM de\n#009AD0\npares de óculos foram vendidos em ambas as regiões\n#006594\n#B6222A\n#FFD54F Estados Europa",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 16,
+      "raw_char_count": 598,
+      "clean_char_count": 573,
+      "clean_line_count": 55,
+      "tables_found": 5,
+      "table_sizes": [
+        "6rows x 3cols",
+        "6rows x 2cols",
+        "5rows x 1cols",
+        "4rows x 1cols",
+        "5rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nA indústria é majoritariamente composta por grupos verticalizados, cuja foco estratégico é no\n#009AD0\ncontrole operacional e captura de margens em múltiplas etapas do negócio\n#006594\n#B6222A\n#",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 17,
+      "raw_char_count": 1837,
+      "clean_char_count": 1812,
+      "clean_line_count": 48,
+      "tables_found": 11,
+      "table_sizes": [
+        "6rows x 3cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\nNo contexto internacional, as transações seguem principalmente a tese de integração vertical para\n#009AD0\ndiversificar a geração de caixa, aumentar sua atuação na cadeia e capturar margem\n#006",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 18,
+      "raw_char_count": 1652,
+      "clean_char_count": 1627,
+      "clean_line_count": 42,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "12rows x 8cols"
+      ],
+      "first_200_chars": "#009AD0\nA mediana dos múltiplos observados nas Transações Precedentes é de 1,8x EV/Receita e 11,0x\n#009AD0\nEV/EBITDA\n#006594\n#B6222A\nValor da\nData Comprador Target Descrição da Target Stake(%) EV/Rece",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 19,
+      "raw_char_count": 2158,
+      "clean_char_count": 2133,
+      "clean_line_count": 40,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "10rows x 10cols"
+      ],
+      "first_200_chars": "#009AD0\nA mediana dos múltiplos observados nos principais players globais é de 1,8x EV/Receita e 11,9x\n#009AD0\nEV/EBITDA\n#006594\n#B6222A\nFabricação Margem Margem\nEmpresa Descrição Distribuição Varejo ",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 20,
+      "raw_char_count": 70,
+      "clean_char_count": 70,
+      "clean_line_count": 7,
+      "tables_found": 1,
+      "table_sizes": [
+        "5rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\n#006594\n#B6222A\n#FFD54F\n2.2. Mercado Óptico - Local\n20",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 21,
+      "raw_char_count": 1209,
+      "clean_char_count": 1184,
+      "clean_line_count": 26,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nO mercado óptico brasileiro apresenta características similares ao global, com crescimento de\n#009AD0\nproblemas oculares, envelhecimento populacional e maior acesso a consultas oftalmológicas\n",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 22,
+      "raw_char_count": 1944,
+      "clean_char_count": 1919,
+      "clean_line_count": 60,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "5rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nA indústria brasileira atingiu BRL 29 Bn em 2025 e apresenta perspectivas positivas de crescimento,\n#009AD0\ncom o avanço do modelo omnichannel, com integração entre os canais físicos e digitai",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 23,
+      "raw_char_count": 807,
+      "clean_char_count": 782,
+      "clean_line_count": 28,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nMercado brasileiro amplo e fragmentado, com mais de 72 mil companhias do varejo — 23% em São\n#009AD0\nPaulo — e elevada heterogeneidade operacional e estrutural\n#006594\n#B6222A\n#FFD54F\nDistribu",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 24,
+      "raw_char_count": 1160,
+      "clean_char_count": 1135,
+      "clean_line_count": 28,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nA indústria local é composta por players globais, atuando como fabricantes e distribuidores,\n#009AD0\nenquanto 5 companhias concentram ~17% do varejo óptico, com o Grupo MDO entre os líderes\n#0",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 25,
+      "raw_char_count": 1546,
+      "clean_char_count": 1521,
+      "clean_line_count": 28,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nO mercado local impõe barreiras relevantes (regulatórias, logísticas, de capital humano) superadas\n#009AD0\npela MDO por meio de escala, parcerias estratégicas e suporte operacional intensivo à",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 26,
+      "raw_char_count": 1622,
+      "clean_char_count": 1597,
+      "clean_line_count": 33,
+      "tables_found": 9,
+      "table_sizes": [
+        "6rows x 3cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "1rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\nCom um mercado pulverizado e com altas barreiras de entrada, investidores estrangeiros tem\n#009AD0\nbuscado crescimento inorgânico e plataformas de franquias escaláveis\n#006594\n#B6222A\n#FFD54F ",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 27,
+      "raw_char_count": 34,
+      "clean_char_count": 34,
+      "clean_line_count": 1,
+      "tables_found": 0,
+      "table_sizes": [],
+      "first_200_chars": "3. Mercadão dos Óculos At a Glance",
+      "quality": "text"
+    },
+    {
+      "page": 28,
+      "raw_char_count": 876,
+      "clean_char_count": 851,
+      "clean_line_count": 28,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nMercadão dos Óculos é referência na criação, expansão e consolidação de uma das principais redes\n#009AD0\nde franquias do país com um track record comprovado de mais de 13 anos\n#006594\n#B6222A\n",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 29,
+      "raw_char_count": 1979,
+      "clean_char_count": 1954,
+      "clean_line_count": 99,
+      "tables_found": 15,
+      "table_sizes": [
+        "6rows x 3cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "3rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 2cols",
+        "4rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 2cols",
+        "2rows x 2cols",
+        "2rows x 2cols",
+        "2rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nMDO é um líder óptico nacional com ecossistema verticalizado e expansão sustentada de margens\n#006594\n#B6222A\n#FFD54F Overview Diferenciais Presença Nacional Ecossistema Integrado\n• 14",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 30,
+      "raw_char_count": 1664,
+      "clean_char_count": 1639,
+      "clean_line_count": 35,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nMDO conta com uma equipe de sócios cuja atuação foi determinante para a liderança da companhia\n#009AD0\nno mercado nacional e que está preparada para conduzir sua próxima fase de crescimento\n#0",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 31,
+      "raw_char_count": 25,
+      "clean_char_count": 25,
+      "clean_line_count": 1,
+      "tables_found": 0,
+      "table_sizes": [],
+      "first_200_chars": "4. Operações da Companhia",
+      "quality": "text"
+    },
+    {
+      "page": 32,
+      "raw_char_count": 1291,
+      "clean_char_count": 1266,
+      "clean_line_count": 42,
+      "tables_found": 10,
+      "table_sizes": [
+        "6rows x 3cols",
+        "7rows x 7cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "4rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\nO público alvo do MDO compreende ~120 MM de brasileiros entre 18 e 60 anos das classes sociais\n#009AD0\nB2, C, D e E com poder de compra crescente\n#006594\n#B6222A\n#FFD54F\nProjeção população bra",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 33,
+      "raw_char_count": 1000,
+      "clean_char_count": 975,
+      "clean_line_count": 52,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nA rede operacional do MDO permite uma exposição nacional com mais de 600 pontos de venda,\n#009AD0\nconstruída por expansão uma expansão constante desde 2018, com maior presença no Sul e Sudeste",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 34,
+      "raw_char_count": 1275,
+      "clean_char_count": 1250,
+      "clean_line_count": 48,
+      "tables_found": 8,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 3cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "1rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nEm 2025, o faturamento ultrapassou ~BRL 490 MM, sustentado pelo crescimento orgânico da rede e\n#009AD0\npelo crescimento da participação de lentes oftálmicas no mix\n#006594\n#B6222A\n#FFD54F\nPart",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 35,
+      "raw_char_count": 895,
+      "clean_char_count": 870,
+      "clean_line_count": 26,
+      "tables_found": 1,
+      "table_sizes": [
+        "6rows x 3cols"
+      ],
+      "first_200_chars": "#009AD0\nMDO opera um ecossistema integrado capturando valor ao longo da cadeia em 4 frentes,\n#009AD0\naumentando resiliência, rentabilidade e opcionalidade estratégica para os investidores\n#006594\n#B62",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 36,
+      "raw_char_count": 1566,
+      "clean_char_count": 1541,
+      "clean_line_count": 45,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\nA distribuidora garante o abastecimento de armações para 600+ pontos de venda, gerenciando o\n#009AD0\nprocesso desde a aquisição ao controle de qualidade e distribuição, com markup médio de ~30",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 37,
+      "raw_char_count": 1031,
+      "clean_char_count": 1006,
+      "clean_line_count": 45,
+      "tables_found": 5,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 2cols",
+        "1rows x 2cols",
+        "2rows x 1cols",
+        "2rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nAs marcas próprias representaram entre 70-75% no último ano do faturamento da distribuidora, com\n#009AD0\nespaço para expansão de participação e ganho de margens\n#006594\n#B6222A\n#FFD54F\n7 Armaç",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 38,
+      "raw_char_count": 1092,
+      "clean_char_count": 1067,
+      "clean_line_count": 33,
+      "tables_found": 3,
+      "table_sizes": [
+        "6rows x 3cols",
+        "5rows x 1cols",
+        "1rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\nA plataforma do MDO oferece mais de 6 formatos de Franquias, estruturados para atender cidades de\n#009AD0\ndiferentes portes, com prazo médio de retorno menor a 24 meses\n#006594\n#B6222A\n#FFD54F",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 39,
+      "raw_char_count": 1581,
+      "clean_char_count": 1556,
+      "clean_line_count": 50,
+      "tables_found": 13,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 2cols",
+        "2rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nO plano de crescimento projeta +250 lojas para os próximos 5 anos, totalizando 855 unidades e\n#009AD0\nampliando o fluxo de royalties\n#006594\n#B6222A\n#FFD54F\n• A receita de 5% de royalties sobr",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 40,
+      "raw_char_count": 1611,
+      "clean_char_count": 1586,
+      "clean_line_count": 47,
+      "tables_found": 6,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 2cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nA implementação do modelo de negócios de lojas próprias intensifica a verticalização do grupo,\n#009AD0\naumenta a margem na cadeia, endereça ineficiências da rede e acelera o crescimento orgâni",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 41,
+      "raw_char_count": 26,
+      "clean_char_count": 26,
+      "clean_line_count": 1,
+      "tables_found": 0,
+      "table_sizes": [],
+      "first_200_chars": "5. Informações Financeiras",
+      "quality": "text"
+    },
+    {
+      "page": 42,
+      "raw_char_count": 1217,
+      "clean_char_count": 1192,
+      "clean_line_count": 34,
+      "tables_found": 4,
+      "table_sizes": [
+        "6rows x 3cols",
+        "2rows x 2cols",
+        "2rows x 2cols",
+        "3rows x 2cols"
+      ],
+      "first_200_chars": "#009AD0\nAs informações financeiras do Grupo MDO são estruturadas em 2 frentes operacionais e 7 veículos\n#009AD0\nsocietários especializados\n#006594\n#B6222A\n#FFD54F\nEstrutura do Grupo Mercadão dos Óculo",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 43,
+      "raw_char_count": 605,
+      "clean_char_count": 580,
+      "clean_line_count": 37,
+      "tables_found": 1,
+      "table_sizes": [
+        "8rows x 4cols"
+      ],
+      "first_200_chars": "#009AD0\nAtravés de uma gestão eficiente, o Grupo MDO espera um aumento de 251 lojas nos próximos 5 anos\n#009AD0\ne um crescimento anual no faturamento da rede de 10,1%\n#006594\n#B6222A\n#FFD54F\nMDO\nHoje\n",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 44,
+      "raw_char_count": 1736,
+      "clean_char_count": 1711,
+      "clean_line_count": 128,
+      "tables_found": 18,
+      "table_sizes": [
+        "6rows x 3cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "4rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nGrupo MDO apresenta um crescimento consistente nas diversas fontes de receitas\n#006594\n#B6222A\n#FFD54F\nReceita Bruta\nFranqueadora\n(BRL MM)\n340,0 n.a. 34% 26% -5% 1% 47% 56% 18% 9% 8% •",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 45,
+      "raw_char_count": 1851,
+      "clean_char_count": 1826,
+      "clean_line_count": 46,
+      "tables_found": 15,
+      "table_sizes": [
+        "6rows x 3cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nA expansão da rede impulsiona o crescimento consistente do EBITDA por meio da franqueadora, da\n#009AD0\ndistribuição de produtos exclusivos e do projeto de lojas próprias\n#006594\n#B6222A\n#FFD54",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 46,
+      "raw_char_count": 1072,
+      "clean_char_count": 1047,
+      "clean_line_count": 51,
+      "tables_found": 10,
+      "table_sizes": [
+        "6rows x 3cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "3rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols",
+        "2rows x 1cols"
+      ],
+      "first_200_chars": "#009AD0\nO modelo asset-light do Grupo MDO impulsiona crescimento do lucro, rápida desalavancagem e\n#009AD0\nelevada distribuição de dividendos para os acionistas\n#006594\n#B6222A\n#FFD54F\nLucro Líquido P",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 47,
+      "raw_char_count": 1695,
+      "clean_char_count": 1670,
+      "clean_line_count": 30,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 11cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nDemonstração de Resultados – Franqueadora\n#006594\n#B6222A\n(BRL k) 2021 2022 2023 2024 2025 2026E 2027E 2028E 2029E 2030E\n#FFD54F\nReceita Bruta 22.575 30.838 39.512 38.561 39.612 42.857",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 48,
+      "raw_char_count": 2470,
+      "clean_char_count": 2445,
+      "clean_line_count": 42,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 11cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nBalanço Patrimonial – Franqueadora\n#006594\n#B6222A\n(BRL k) 2021 2022 2023 2024 2025 2026E 2027E 2028E 2029E 2030E\n#FFD54F\nAtivo 6.522 16.954 57.219 54.344 53.069 55.039 57.615 59.080 6",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 49,
+      "raw_char_count": 1640,
+      "clean_char_count": 1615,
+      "clean_line_count": 30,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 11cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nDemonstração de Resultados – Distribuidora\n#006594\n#B6222A\n(BRL k) 2021 2022 2023 2024 2025E 2026E 2027E 2028E 2029E 2030E\n#FFD54F\nReceita Bruta 25.661 34.022 42.142 38.667 38.441 38.5",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 50,
+      "raw_char_count": 2219,
+      "clean_char_count": 2194,
+      "clean_line_count": 42,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 11cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nBalanço Patrimonial – Distribuidora\n#006594\n#B6222A\n(BRL k) 2021 2022 2023 2024 2025 2026E 2027E 2028E 2029E 2030E\n#FFD54F\nAtivo 23.112 34.722 27.802 34.805 34.571 27.617 29.507 34.701",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 51,
+      "raw_char_count": 1363,
+      "clean_char_count": 1338,
+      "clean_line_count": 30,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 11cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nDemonstração de Resultados – Lojas Próprias\n#006594\n#B6222A\n(BRL k) 2021 2022 2023 2024 2025 2026E 2027E 2028E 2029E 2030E\n#FFD54F\nReceita Bruta -- -- -- -- -- 33.600 84.701 103.136 10",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 52,
+      "raw_char_count": 1984,
+      "clean_char_count": 1959,
+      "clean_line_count": 42,
+      "tables_found": 2,
+      "table_sizes": [
+        "6rows x 3cols",
+        "1rows x 11cols"
+      ],
+      "first_200_chars": "#009AD0\n#009AD0\nBalanço Patrimonial – Lojas Próprias\n#006594\n#B6222A\n(BRL k) 2021 2022 2023 2024 2025 2026E 2027E 2028E 2029E 2030E\n#FFD54F\nAtivo -- -- -- -- -- 9.073 23.808 30.018 31.068 31.812\nAtivo",
+      "quality": "table_heavy"
+    },
+    {
+      "page": 53,
+      "raw_char_count": 53,
+      "clean_char_count": 28,
+      "clean_line_count": 1,
+      "tables_found": 1,
+      "table_sizes": [
+        "2rows x 2cols"
+      ],
+      "first_200_chars": "www.valuecapitaladvisors.com",
+      "quality": "table_heavy"
+    }
+  ]
+}
