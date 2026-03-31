@@ -6,13 +6,13 @@ Sistema de geração inteligente de dossiês a partir de documentos de transaç�
 
 ```bash
 # 1. Clone o repo
-git clone https://github.com/SEU-USER/dossie-engine.git
+git clone https://github.com/decohutz/dossie-engine.git
 cd dossie-engine
 
 # 2. Crie o ambiente virtual
 python3 -m venv .venv
 source .venv/bin/activate  # Linux/Mac
-# .venv\Scripts\activate   # Windows
+.venv\Scripts\activate   # Windows
 
 # 3. Instale as dependências
 pip install -e ".[dev]"
