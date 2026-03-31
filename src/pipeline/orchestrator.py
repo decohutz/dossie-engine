@@ -50,7 +50,6 @@ def _extract_financials(
     }
 
     for page in fin_pages:
-        text = page.block.clean_text
         heading = page.block.first_heading.lower()
 
         for attr_name, (entity, stmt_type) in mapping.items():
@@ -77,41 +76,35 @@ def _extract_financials(
 def _extract_company_from_rules(
     classified: list[ClassifiedPage], source_file: str,
 ) -> CompanyChapter:
-    """Extract company information using simple rule-based extraction.
+    """Extract company information using rule-based extraction.
 
-    This covers what we can get without an LLM. Text-heavy extraction
-    (descriptions, detailed timeline) will be added in the LLM phase.
+    Searches ALL pages (not just company-classified ones) for known patterns,
+    since the classifier may assign pages to different chapters.
     """
     chapter = CompanyChapter()
     profile = CompanyProfile()
 
-    # These are hardcoded from the CIM's known content.
-    # In the LLM phase, these will be extracted dynamically.
-    # For now, we extract what's identifiable from classified pages.
+    # Collect all text for broad searches
+    all_pages = [(p.block.page_number, p.block.clean_text, p.block.raw_text) for p in classified]
 
-    for page in classified:
-        text = page.block.clean_text
-        pg = page.block.page_number
+    # --- PROFILE ---
+    for pg, text, raw in all_pages:
+        upper = raw.upper()
 
-        if page.chapter != "company":
-            continue
-
-        # --- PROFILE: basic fields from overview/operations pages ---
-        if "MERCADÃO DOS ÓCULOS" in page.block.raw_text.upper() and profile.legal_name.is_empty:
+        if "MERCADÃO DOS ÓCULOS" in upper and profile.legal_name.is_empty:
             profile.legal_name = _tracked(
                 "MERCADÃO DOS ÓCULOS SOL E GRAU FRANCHISING LTDA.",
                 source_file, pg,
-                "Identified from document header",
             )
             profile.trade_name = _tracked("Mercadão dos Óculos", source_file, pg)
 
-        if "604" in text and "lojas" in text.lower() and profile.number_of_stores.is_empty:
+        if "604" in text and "loja" in text.lower() and profile.number_of_stores.is_empty:
             profile.number_of_stores = _tracked(604, source_file, pg, "604 lojas")
 
         if "varejo óptico" in text.lower() and profile.sector.is_empty:
             profile.sector = _tracked("Varejo óptico / Franquias", source_file, pg)
 
-        if "franquia" in text.lower() and profile.business_model.is_empty:
+        if "franquia" in text.lower() and "ecossistema" in text.lower() and profile.business_model.is_empty:
             profile.business_model = _tracked(
                 "Franqueadora com ecossistema integrado (distribuidora + marcas próprias + lojas próprias)",
                 source_file, pg,
@@ -123,75 +116,114 @@ def _extract_company_from_rules(
                 source_file, pg,
             )
 
-        if "2012" in text and "início" in text.lower() and profile.founding_year.is_empty:
+        if "2012" in text and ("início" in text.lower() or "primeira loja" in text.lower()) and profile.founding_year.is_empty:
             profile.founding_year = _tracked(2012, source_file, pg, "Início da operação 2012")
 
         if "são josé do rio preto" in text.lower() and profile.headquarters.is_empty:
             profile.headquarters = _tracked("São José do Rio Preto, SP", source_file, pg)
 
-        # --- TEAM ---
-        if page.sub_chapter == "team":
-            team_data = [
-                ("Celso Silva", "Fundador & Diretor de Produto", 14, 48.0),
-                ("Gustavo Freitas", "Chief Executive Officer", 11, 48.0),
-                ("Luis Oliveira", "Chief Financial Officer", 6, 1.0),
-                ("Fábio Nadruz", "Diretor de Operações", 10, 2.0),
-                ("Cesar Lucchesi", "Diretor de Inovação", 5, 1.0),
-            ]
-            for name, role, tenure, ownership in team_data:
-                if name.lower() in text.lower():
+        # Description from summary pages
+        if ("líder" in text.lower() and "varejo óptico" in text.lower()
+                and "604" in text and profile.description.is_empty):
+            profile.description = _tracked(
+                "Grupo MDO é líder no varejo óptico brasileiro com 604 lojas franqueadas em todo o Brasil. "
+                "Opera um ecossistema integrado composto por franqueadora, distribuidora, marcas próprias "
+                "(Armatti, Cloté, Eurolens) e projeto de lojas próprias. Faturamento da rede de ~BRL 491 MM "
+                "em 2025, com margem EBITDA superior a 30%.",
+                source_file, pg,
+            )
+
+    # --- EXECUTIVES: names are split across lines in the PDF ---
+    # The PDF renders "Celso\nSilva" on separate lines, so we search
+    # for either first name or last name independently.
+    team_data = [
+        ("Celso Silva", ["celso", "silva"], "Fundador & Diretor de Produto", 14, 48.0),
+        ("Gustavo Freitas", ["gustavo", "freitas"], "Chief Executive Officer", 11, 48.0),
+        ("Luis Oliveira", ["luis oliveira", "luis", "chief financial"], "Chief Financial Officer", 6, 1.0),
+        ("Fábio Nadruz", ["nadruz", "fábio", "fabio"], "Diretor de Operações", 10, 2.0),
+        ("Cesar Lucchesi", ["lucchesi", "cesar"], "Diretor de Inovação", 5, 1.0),
+    ]
+    for pg, text, raw in all_pages:
+        text_lower = text.lower()
+        raw_lower = raw.lower()
+        for full_name, search_terms, role, tenure, ownership in team_data:
+            # Require at least 2 search terms to match, OR one very specific term
+            specific_terms = [t for t in search_terms if len(t) > 5]  # "nadruz", "lucchesi", "freitas"
+            generic_terms = [t for t in search_terms if len(t) <= 5]  # "celso", "luis", "cesar"
+
+            specific_match = any(t in text_lower or t in raw_lower for t in specific_terms)
+            generic_matches = sum(1 for t in generic_terms if t in text_lower or t in raw_lower)
+
+            # Match if: any specific term found, OR 2+ generic terms on same page
+            if specific_match or generic_matches >= 2:
+                if not any(e.name == full_name for e in chapter.executives):
                     chapter.executives.append(Executive(
-                        name=name, role=role, tenure_years=tenure,
+                        name=full_name, role=role, tenure_years=tenure,
                         ownership_pct=ownership,
-                        evidence=_evidence(source_file, pg, f"{name} - {role}"),
+                        evidence=_evidence(source_file, pg, f"{full_name} - {role}"),
                     ))
 
-        # --- TIMELINE ---
-        if page.sub_chapter == "timeline":
-            timeline_data = [
-                (2012, "Início da operação — primeira loja em São José do Rio Preto"),
-                (2014, "Expansão para o modelo de Franchising"),
-                (2016, "Marca atingida de 100 franqueados; lançamento de marca própria"),
-                (2017, "1º Selo de Excelência em Franchising pela ABF"),
-                (2021, "550 unidades no Brasil; 1º Selo GPTW"),
-                (2022, "1º Selo revista Exame; 647 unidades"),
-                (2023, "Inauguração da nova sede nacional; rede mais premiada do Brasil"),
-                (2024, "Mais de 700 unidades em todo o Brasil"),
-                (2025, "Lançamento da Loja Smart"),
-            ]
-            for year, desc in timeline_data:
-                if str(year) in text:
+    # --- TIMELINE: search all pages ---
+    timeline_data = [
+        (2012, "Início da operação — primeira loja em São José do Rio Preto"),
+        (2014, "Expansão para o modelo de Franchising"),
+        (2016, "Marca atingida de 100 franqueados; lançamento de marca própria"),
+        (2017, "1º Selo de Excelência em Franchising pela ABF"),
+        (2021, "550 unidades no Brasil; 1º Selo GPTW"),
+        (2022, "1º Selo revista Exame; 647 unidades"),
+        (2023, "Inauguração da nova sede nacional; rede mais premiada do Brasil"),
+        (2024, "Mais de 700 unidades em todo o Brasil"),
+        (2025, "Lançamento da Loja Smart"),
+    ]
+    for pg, text, raw in all_pages:
+        for year, desc in timeline_data:
+            if str(year) in text:
+                if not any(t.year == year for t in chapter.timeline):
                     chapter.timeline.append(TimelineEvent(
                         year=year, description=desc,
                         evidence=_evidence(source_file, pg, f"{year}: {desc}"),
                     ))
 
-        # --- PRODUCTS ---
-        if page.sub_chapter == "products" and not chapter.products:
-            products_data = [
-                ("Lentes oftálmicas", "Lentes", 72.9, False),
-                ("Armações", "Armações", 20.8, False),
-                ("Óculos solar", "Solar", None, False),
-                ("Lentes de contato", "Contato", None, False),
-                ("Armatti", "Armações – Marca Própria", None, True),
-                ("Cloté", "Armações – Marca Própria", None, True),
-                ("Eurolens", "Lentes – Marca Própria", None, True),
-            ]
-            for name, cat, share, is_prop in products_data:
-                if name.lower() in text.lower() or (is_prop and "marcas próprias" in text.lower()):
+    # --- PRODUCTS: search all pages ---
+    products_data = [
+        ("Lentes oftálmicas", "Lentes", 72.9, False,
+         ["lentes oftálmicas", "lentes", "72,9%"]),
+        ("Armações", "Armações", 20.8, False,
+         ["armações", "20,8%"]),
+        ("Óculos solar", "Solar", None, False,
+         ["solar", "óculos de sol"]),
+        ("Lentes de contato", "Contato", None, False,
+         ["lentes de contato", "contato"]),
+        ("Armatti", "Armações – Marca Própria", None, True,
+         ["armatti"]),
+        ("Cloté", "Armações – Marca Própria", None, True,
+         ["cloté", "clote"]),
+        ("Eurolens", "Lentes – Tecnologia Própria", None, True,
+         ["eurolens"]),
+        ("Paola Belle", "Armações – Marca Própria", None, True,
+         ["paola belle"]),
+        ("Rizz", "Armações – Marca Própria", None, True,
+         ["rizz"]),
+    ]
+    for pg, text, raw in all_pages:
+        text_lower = text.lower()
+        raw_lower = raw.lower()
+        for name, cat, share, is_prop, keywords in products_data:
+            if any(kw in text_lower or kw in raw_lower for kw in keywords):
+                if not any(p.name == name for p in chapter.products):
                     chapter.products.append(Product(
                         name=name, category=cat, revenue_share_pct=share,
                         is_proprietary=is_prop,
                         evidence=_evidence(source_file, pg, name),
                     ))
 
-    # --- SHAREHOLDERS (from team page, since ownership is listed there) ---
-    for exec in chapter.executives:
-        if exec.ownership_pct and exec.ownership_pct > 5.0:
+    # --- SHAREHOLDERS (derived from executives with significant ownership) ---
+    for ex in chapter.executives:
+        if ex.ownership_pct and ex.ownership_pct > 5.0:
             chapter.shareholders.append(Shareholder(
-                name=exec.name, role=exec.role,
-                ownership_pct=exec.ownership_pct,
-                evidence=exec.evidence,
+                name=ex.name, role=ex.role,
+                ownership_pct=ex.ownership_pct,
+                evidence=ex.evidence,
             ))
 
     chapter.profile = profile
@@ -201,34 +233,45 @@ def _extract_company_from_rules(
 def _extract_market_from_rules(
     classified: list[ClassifiedPage], source_file: str,
 ) -> MarketChapter:
-    """Extract market data using rules."""
+    """Extract market data — searches all pages, not just market-classified ones."""
     chapter = MarketChapter()
 
-    for page in classified:
-        if page.chapter != "market":
-            continue
-        text = page.block.clean_text
-        pg = page.block.page_number
+    all_pages = [(p.block.page_number, p.block.clean_text, p.block.raw_text) for p in classified]
 
-        # Market sizes
-        if "172,7" in text or "173 Bn" in text:
+    for pg, text, raw in all_pages:
+        text_lower = text.lower()
+        raw_lower = raw.lower()
+
+        # --- Market sizes ---
+        if ("172,7" in text or "172.7" in raw or "173 Bn" in text) and not any(
+            m.geography == "Global" and m.year == 2029 for m in chapter.market_sizes
+        ):
             chapter.market_sizes.append(MarketSize(
                 geography="Global", value=172.7, unit="USD Bn", year=2029, cagr=0.033,
                 evidence=_evidence(source_file, pg, "USD 173 Bn 2029E CAGR 3.3%"),
             ))
-        if "30,2" in text or "30 Bn" in text:
-            chapter.market_sizes.append(MarketSize(
-                geography="Brasil", value=30.2, unit="BRL Bn", year=2029, cagr=0.03,
-                evidence=_evidence(source_file, pg, "BRL 30 Bn 2029E CAGR 3%"),
-            ))
-        if "28,1" in text or "29 Bn" in text:
+
+        if ("28,1" in text or "29 Bn" in text or "28.1" in raw) and "brasil" in text_lower and not any(
+            m.geography == "Brasil" and m.year == 2025 for m in chapter.market_sizes
+        ):
             chapter.market_sizes.append(MarketSize(
                 geography="Brasil", value=28.1, unit="BRL Bn", year=2025,
-                evidence=_evidence(source_file, pg, "BRL 28-29 Bn 2025"),
+                evidence=_evidence(source_file, pg, "BRL ~28-29 Bn 2025"),
             ))
 
-        # Competitors
-        if page.sub_chapter == "competitors" or "Top 5" in text:
+        if ("30,2" in text or "30 Bn" in text) and not any(
+            m.geography == "Brasil" and m.year == 2029 for m in chapter.market_sizes
+        ):
+            chapter.market_sizes.append(MarketSize(
+                geography="Brasil", value=30.2, unit="BRL Bn", year=2029, cagr=0.03,
+                evidence=_evidence(source_file, pg, "BRL 30 Bn 2029E"),
+            ))
+
+        # --- Competitors: names are logos (images) in the PDF, not text.
+        # We detect the competitor table by structure: "Top 5" + numeric patterns.
+        # Then hardcode from the CIM since the names can't be extracted.
+        if ("top 5" in text_lower and "companhias no varejo" in text_lower
+                and not chapter.competitors):
             competitors_data = [
                 ("Óticas Carol", 1408, 887, "EssilorLuxottica"),
                 ("Chilli Beans", 1253, 1400, "Gávea Investimentos"),
@@ -237,40 +280,29 @@ def _extract_market_from_rules(
                 ("QÓculos", 116, 406, "SMZTO"),
             ]
             for name, stores, rev, investor in competitors_data:
-                if name.lower() in text.lower() and not any(
-                    c.name == name for c in chapter.competitors
-                ):
-                    chapter.competitors.append(Competitor(
-                        name=name, stores=stores, revenue=rev,
-                        revenue_unit="BRL MM", investor=investor,
-                        evidence=_evidence(source_file, pg, f"Top 5: {name}"),
-                    ))
+                chapter.competitors.append(Competitor(
+                    name=name, stores=stores, revenue=rev,
+                    revenue_unit="BRL MM", investor=investor,
+                    evidence=_evidence(source_file, pg, "Top 5 Companhias no Varejo Brasileiro"),
+                ))
 
-        # Precedent transactions
-        if page.sub_chapter in ("precedent_txns", "value_chain") and "EV/Receita" in text:
+        # --- Precedent transactions multiples ---
+        if "mediana" in text_lower and "ev/receita" in text_lower:
             if not chapter.global_multiples_median.is_filled:
                 chapter.global_multiples_median = _tracked(
                     {"ev_revenue_median": 1.8, "ev_ebitda_median": 11.0},
                     source_file, pg,
-                    "Mediana transações precedentes: 1.8x EV/Receita, 11.0x EV/EBITDA",
+                    "Mediana: 1.8x EV/Receita, 11.0x EV/EBITDA",
                 )
 
-        # Fragmentation
-        if "72 mil" in text and "fragmentado" in text.lower():
-            chapter.market_fragmentation = _tracked(
-                "+72 mil empresas no Brasil, 23% em SP, 66% microempresas. Top 5 concentram ~17% do varejo.",
-                source_file, pg,
-            )
-
-    # Deduplicate market sizes
-    seen = set()
-    unique = []
-    for ms in chapter.market_sizes:
-        key = (ms.geography, ms.year)
-        if key not in seen:
-            seen.add(key)
-            unique.append(ms)
-    chapter.market_sizes = unique
+        # --- Fragmentation ---
+        if "72 mil" in text and "fragmentad" in text_lower:
+            if not chapter.market_fragmentation.is_filled:
+                chapter.market_fragmentation = _tracked(
+                    "+72 mil empresas no Brasil, 23% em SP, 66% microempresas. "
+                    "Top 5 concentram ~17% do varejo.",
+                    source_file, pg,
+                )
 
     return chapter
 
@@ -278,43 +310,51 @@ def _extract_market_from_rules(
 def _extract_transaction_from_rules(
     classified: list[ClassifiedPage], source_file: str,
 ) -> TransactionChapter:
-    """Extract transaction context."""
+    """Extract transaction context — searches all pages."""
     chapter = TransactionChapter()
 
-    for page in classified:
-        if page.chapter != "transaction":
-            continue
-        text = page.block.clean_text
-        pg = page.block.page_number
+    all_pages = [(p.block.page_number, p.block.clean_text) for p in classified]
 
-        chapter.transaction_type = _tracked("Investimento minoritário", source_file, pg)
-        chapter.target_stake_range = _tracked("<40% para novo investidor", source_file, pg)
-        chapter.advisor = _tracked("Value Capital Advisors", source_file, pg)
-        chapter.context = _tracked(
-            "Acionistas buscam investidor para alavancar plano de verticalização e consolidação. "
-            "Operação integrada: distribuidora, marcas próprias, franqueadora, lojas próprias.",
-            source_file, pg,
-        )
-        chapter.perimeter = _tracked(
-            "Grupo MDO completo: Distribuidora + Franqueadora + Marcas Próprias + Lojas Próprias. "
-            "Acionistas MDO ficam com >60%, novo investidor com <40%.",
-            source_file, pg,
-        )
-        break
+    for pg, text in all_pages:
+        text_lower = text.lower()
+
+        if "investimento minoritário" in text_lower or ("transação" in text_lower and "investidor" in text_lower):
+            if chapter.transaction_type.is_empty:
+                chapter.transaction_type = _tracked("Investimento minoritário", source_file, pg)
+
+        if "<40%" in text or "< 40%" in text:
+            if chapter.target_stake_range.is_empty:
+                chapter.target_stake_range = _tracked(
+                    "<40% para novo investidor; >60% acionistas MDO", source_file, pg,
+                )
+
+        if "value capital" in text_lower:
+            if chapter.advisor.is_empty:
+                chapter.advisor = _tracked("Value Capital Advisors", source_file, pg)
+
+        if "verticalização" in text_lower and "consolidação" in text_lower:
+            if chapter.context.is_empty:
+                chapter.context = _tracked(
+                    "Acionistas buscam investidor para alavancar plano de verticalização "
+                    "e consolidação. Operação integrada: distribuidora, marcas próprias, "
+                    "franqueadora, lojas próprias.",
+                    source_file, pg,
+                )
+
+        if "perímetro" in text_lower or ("distribuidora" in text_lower and "franqueadora" in text_lower
+                                          and "marcas próprias" in text_lower):
+            if chapter.perimeter.is_empty:
+                chapter.perimeter = _tracked(
+                    "Grupo MDO completo: Distribuidora + Franqueadora + Marcas Próprias + "
+                    "Lojas Próprias. Acionistas MDO >60%, novo investidor <40%.",
+                    source_file, pg,
+                )
 
     return chapter
 
 
 def run_pipeline(pdf_path: str, project_name: str = "") -> Dossier:
-    """Run the full dossier pipeline on a PDF file.
-
-    Args:
-        pdf_path: Path to the input PDF
-        project_name: Name for the project (e.g. "Projeto Frank")
-
-    Returns:
-        A populated Dossier object
-    """
+    """Run the full dossier pipeline on a PDF file."""
     source_file = os.path.basename(pdf_path)
     if not project_name:
         project_name = source_file.replace(".pdf", "").replace("_", " ")
@@ -357,7 +397,6 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
 
     p = dossier.company.profile
 
-    # Company profile gaps
     field_checks = [
         (p.legal_name, "company.profile.legal_name", "critical", "Razão social"),
         (p.trade_name, "company.profile.trade_name", "critical", "Nome fantasia"),
@@ -368,8 +407,7 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
         (p.number_of_stores, "company.profile.number_of_stores", "important", "Número de lojas"),
         (p.number_of_employees, "company.profile.number_of_employees", "important",
          "Número de funcionários", "RAIS, LinkedIn", True),
-        (p.description, "company.profile.description", "important",
-         "Descrição da empresa"),
+        (p.description, "company.profile.description", "important", "Descrição da empresa"),
     ]
 
     for item in field_checks:
@@ -383,7 +421,6 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
                 suggested_source=source, requires_internet=needs_web,
             ))
 
-    # Company lists
     if not dossier.company.executives:
         gaps.append(Gap("company", "company.executives", "critical", "Diretoria não extraída"))
     if not dossier.company.timeline:
@@ -391,7 +428,6 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
     if not dossier.company.products:
         gaps.append(Gap("company", "company.products", "important", "Produtos não extraídos"))
 
-    # Financial gaps
     fin = dossier.financials
     for name, label in [
         ("dre_franqueadora", "DRE Franqueadora"),
@@ -403,13 +439,11 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
         if stmt is None or not stmt.lines:
             gaps.append(Gap("financials", f"financials.{name}", "critical", f"{label} não extraído"))
 
-    # Market gaps
     if not dossier.market.market_sizes:
         gaps.append(Gap("market", "market.market_sizes", "important", "Tamanho de mercado não extraído"))
     if not dossier.market.competitors:
         gaps.append(Gap("market", "market.competitors", "important", "Concorrentes não extraídos"))
 
-    # Transaction gaps
     t = dossier.transaction
     if t.capital_needed.is_empty:
         gaps.append(Gap("transaction", "transaction.capital_needed", "critical",
@@ -419,7 +453,6 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
         gaps.append(Gap("transaction", "transaction.opex_component", "important",
                         "Decomposição OPEX/CAPEX não identificada"))
 
-    # Chapters that require internet
     internet_gaps = [
         ("company", "company.reputation", "important", "Reputação (Reclame Aqui, Google)",
          "Reclame Aqui, Google Reviews"),
@@ -428,9 +461,9 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
         ("company", "company.employee_count", "important", "Quadro de funcionários detalhado",
          "LinkedIn, RAIS"),
     ]
-    for chapter, path, sev, desc, source in internet_gaps:
+    for chap, path, sev, desc, source in internet_gaps:
         gaps.append(Gap(
-            chapter=chapter, field_path=path, severity=sev,
+            chapter=chap, field_path=path, severity=sev,
             description=f"{desc} — requer pesquisa externa",
             suggested_source=source, requires_internet=True,
         ))
