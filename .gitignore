@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Data (inputs and outputs are local, not committed)
+data/inputs/*
+data/outputs/*
+data/versions/*
+!data/inputs/.gitkeep
+!data/outputs/.gitkeep
+!data/versions/.gitkeep
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test fixtures (keep only small samples)
+tests/fixtures/*.pdf
+!tests/fixtures/README.md
