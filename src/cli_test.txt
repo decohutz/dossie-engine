@@ -1,0 +1,20 @@
+# 1. Processar o CIM (gera MD + JSON + versão)
+python -m src.cli process data/inputs/Projeto_Frank_CIM.pdf -p "Projeto Frank" -f both
+
+# 2. Ver as versões salvas
+python -m src.cli versions -p "Projeto Frank"
+
+# 3. Ver as gaps
+python -m src.cli gaps -p "Projeto Frank"
+
+# 4. Ver o resumo
+python -m src.cli show -p "Projeto Frank" -f summary
+
+# 5. Processar de novo (cria v002)
+python -m src.cli process data/inputs/Projeto_Frank_CIM.pdf -p "Projeto Frank" -f both
+
+# 6. Ver que agora tem 2 versões
+python -m src.cli versions -p "Projeto Frank"
+
+# 7. Comparar as duas versões
+python -m src.cli diff -p "Projeto Frank" --old v001
