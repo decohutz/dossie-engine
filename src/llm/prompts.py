@@ -37,14 +37,30 @@ TEXTO:
 def prompt_executives(text: str) -> tuple[str, str]:
     return SYSTEM_EXTRACTION, f"""Extraia todos os executivos/diretores/sócios mencionados no texto abaixo.
 
-ATENÇÃO: os nomes podem estar em linhas separadas (ex: "Celso" em uma linha e "Silva" na seguinte).
-Junte primeiro nome e sobrenome mesmo que estejam em linhas diferentes.
+ATENÇÃO CRÍTICA sobre o layout do PDF:
+- Os nomes podem estar em COLUNAS SEPARADAS, não em linhas contínuas
+- Exemplo do layout real no PDF:
+  14+        11+         6+          10+         5+
+  Celso      Gustavo     Luis        Fábio       Cesar
+  Silva      Freitas     Oliveira    Nadruz      Lucchesi
+  (48%)      (48%)       (1%)        (2%)        (1%)
+
+- Neste exemplo, os executivos são:
+  - Celso Silva (48%), NÃO "Celso Gustavo Silva"
+  - Gustavo Freitas (48%), NÃO "Luis Freitas"
+  - Luis Oliveira (1%)
+  - Fábio Nadruz (2%)
+  - Cesar Lucchesi (1%)
+
+- Os números acima dos nomes (14+, 11+, etc.) são ANOS DE EXPERIÊNCIA, não parte do nome
+- Cada COLUNA é um executivo: primeiro nome em cima, sobrenome embaixo, percentual abaixo
+- NÃO junte nomes de colunas diferentes
 
 Retorne JSON no formato:
 {{
   "executives": [
     {{
-      "name": "nome completo",
+      "name": "nome completo (primeiro nome + sobrenome da MESMA coluna)",
       "role": "cargo na empresa",
       "tenure_years": 10,
       "ownership_pct": 48.0,
@@ -58,19 +74,29 @@ TEXTO:
 
 
 def prompt_timeline(text: str) -> tuple[str, str]:
-    return SYSTEM_EXTRACTION, f"""Extraia os marcos históricos/timeline da empresa mencionados no texto abaixo.
+    return SYSTEM_EXTRACTION, f"""Extraia TODOS os marcos históricos/timeline da empresa mencionados no texto abaixo.
+
+Procure por:
+- Anos específicos (2012, 2014, 2016, 2017, 2021, 2022, 2023, 2024, 2025, etc.)
+- Marcos como: início de operação, expansão, selos, prêmios, número de unidades, lançamentos
+- Selos como: ABF, GPTW, Exame
+- Inaugurações, novas sedes, lançamentos de produtos
 
 Retorne JSON no formato:
 {{
   "events": [
     {{
       "year": 2012,
-      "description": "descrição do evento"
+      "description": "descrição do evento (uma frase curta e específica)"
     }}
   ]
 }}
 
-Ordene por ano. Inclua apenas eventos com ano explícito no texto.
+IMPORTANTE:
+- Cada evento deve ter UMA descrição específica. NÃO agrupe múltiplos eventos no mesmo ano.
+- Se houver vários eventos no mesmo ano, crie entradas separadas com o mesmo ano.
+- Ordene por ano.
+- Inclua apenas eventos com ano explícito no texto.
 
 TEXTO:
 {text}"""

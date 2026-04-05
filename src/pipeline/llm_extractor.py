@@ -17,7 +17,6 @@ from ..pipeline.classifier import ClassifiedPage
 
 
 def _safe_str(val) -> str:
-    """Safely convert a value to stripped string. Handles None."""
     if val is None:
         return ""
     return str(val).strip()
@@ -75,7 +74,7 @@ def extract_company_llm(
     content_pages = _get_all_content_pages(classified)
     company_pages = _get_pages_for_chapter(classified, "company")
 
-    # --- PROFILE ---
+    # --- PROFILE: first pass with overview pages ---
     overview_pages = content_pages[:12]
     chunks = _combine_texts(overview_pages)
 
@@ -100,6 +99,27 @@ def extract_company_llm(
                 if val is not None and getattr(profile, field_name).is_empty:
                     setattr(profile, field_name, _tracked(val, source_file, pg, field_name))
             break
+
+    # --- PROFILE: second pass if key fields still empty ---
+    empty_fields = []
+    for f in ["legal_name", "headquarters", "number_of_employees"]:
+        if getattr(profile, f).is_empty:
+            empty_fields.append(f)
+
+    if empty_fields and len(company_pages) > 12:
+        if verbose:
+            print(f"  [LLM] Second pass for profile fields: {empty_fields}")
+        remaining = company_pages[12:]
+        chunks2 = _combine_texts(remaining)
+        for text, page_nums in chunks2:
+            system, prompt = prompts.prompt_company_profile(text)
+            data = client.extract_json(prompt, system)
+            if data and isinstance(data, dict):
+                pg = page_nums[0] if page_nums else 0
+                for field_name in empty_fields:
+                    val = data.get(field_name)
+                    if val and getattr(profile, field_name).is_empty:
+                        setattr(profile, field_name, _tracked(val, source_file, pg, field_name))
 
     # --- EXECUTIVES ---
     if verbose:
@@ -134,13 +154,13 @@ def extract_company_llm(
                 evidence=ex.evidence,
             ))
 
-    # --- TIMELINE ---
+    # --- TIMELINE: search ALL company pages ---
     if verbose:
-        print(f"  [LLM] Extracting timeline...")
+        print(f"  [LLM] Extracting timeline from {len(company_pages)} company pages...")
 
-    timeline_pages = [p for p in classified if p.sub_chapter == "timeline"] or company_pages[:5]
-    for page in timeline_pages:
-        system, prompt = prompts.prompt_timeline(page.block.clean_text)
+    chunks = _combine_texts(company_pages)
+    for text, page_nums in chunks:
+        system, prompt = prompts.prompt_timeline(text)
         data = client.extract_json(prompt, system)
 
         if data and isinstance(data, dict):
@@ -149,19 +169,29 @@ def extract_company_llm(
                     continue
                 year = ev.get("year")
                 desc = _safe_str(ev.get("description"))
-                if year and desc and not any(t.year == year for t in chapter.timeline):
-                    chapter.timeline.append(TimelineEvent(
-                        year=year, description=desc,
-                        evidence=_evidence(source_file, page.block.page_number, f"{year}: {desc}"),
-                    ))
+                if year and desc:
+                    if not any(t.year == year and t.description == desc for t in chapter.timeline):
+                        pg = page_nums[0] if page_nums else 0
+                        chapter.timeline.append(TimelineEvent(
+                            year=year, description=desc,
+                            evidence=_evidence(source_file, pg, f"{year}: {desc}"),
+                        ))
 
-    # --- PRODUCTS ---
+    # Deduplicate: keep unique year+description, sort by year
+    seen = set()
+    unique_timeline = []
+    for t in sorted(chapter.timeline, key=lambda x: x.year):
+        key = (t.year, t.description[:50])
+        if key not in seen:
+            seen.add(key)
+            unique_timeline.append(t)
+    chapter.timeline = unique_timeline
+
+    # --- PRODUCTS: search ALL company pages ---
     if verbose:
-        print(f"  [LLM] Extracting products...")
+        print(f"  [LLM] Extracting products from {len(company_pages)} company pages...")
 
-    product_pages = [p for p in classified if p.sub_chapter in ("products", "distribution")] or company_pages
-    chunks = _combine_texts(product_pages)
-
+    chunks = _combine_texts(company_pages)
     for text, page_nums in chunks:
         system, prompt = prompts.prompt_products(text)
         data = client.extract_json(prompt, system)
@@ -172,7 +202,7 @@ def extract_company_llm(
                 if not isinstance(prod, dict):
                     continue
                 name = _safe_str(prod.get("name"))
-                if name and not any(p.name == name for p in chapter.products):
+                if name and not any(p.name.lower() == name.lower() for p in chapter.products):
                     chapter.products.append(Product(
                         name=name,
                         category=_safe_str(prod.get("category")),
@@ -314,7 +344,8 @@ def extract_transaction_llm(
     tx_pages = _get_pages_for_chapter(classified, "transaction")
     content_pages = _get_all_content_pages(classified)
 
-    candidate_pages = tx_pages + content_pages[:5] + content_pages[-5:]
+    # Broader search: transaction pages + first 8 + last 5 content pages
+    candidate_pages = tx_pages + content_pages[:8] + content_pages[-5:]
     seen = set()
     unique_pages = []
     for p in candidate_pages:
