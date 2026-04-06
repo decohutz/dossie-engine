@@ -44,6 +44,8 @@ def process(
     file: str = typer.Argument(..., help="Caminho para o arquivo PDF de entrada"),
     project: str = typer.Option("", "--project", "-p", help="Nome do projeto (ex: 'Projeto Frank')"),
     output_format: str = typer.Option("md", "--format", "-f", help="Formato de saída: md, json, both"),
+    no_llm: bool = typer.Option(False, "--no-llm", help="Desabilitar LLM e usar extração por regras"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
 ):
     """Processa um CIM/PDF e gera o dossiê completo."""
     from .pipeline.orchestrator import run_pipeline
@@ -56,20 +58,18 @@ def process(
 
     project_name = project or Path(file).stem.replace("_", " ")
 
+    mode = "regras (sem LLM)" if no_llm else "LLM (Ollama)"
     _print(f"\n[bold]Processando:[/bold] {file}")
-    _print(f"[bold]Projeto:[/bold] {project_name}\n")
+    _print(f"[bold]Projeto:[/bold] {project_name}")
+    _print(f"[bold]Extração:[/bold] {mode}\n")
 
-    # Get next version
     version = get_next_version_number(project_name)
 
-    # Run pipeline
-    dossier = run_pipeline(file, project_name=project_name)
+    dossier = run_pipeline(file, project_name=project_name, use_llm=not no_llm, verbose=verbose)
     dossier.metadata.version = version
 
-    # Save outputs
     os.makedirs("data/outputs", exist_ok=True)
     safe_name = project_name.lower().replace(" ", "_")
-
     files_saved = []
 
     if output_format in ("md", "both"):
@@ -86,13 +86,11 @@ def process(
             f.write(js)
         files_saved.append(("JSON", json_path, f"{len(js):,} chars"))
 
-    # Always save both for versioning
     full_json = to_json(dossier)
     dossier_dict = json.loads(full_json)
     version_path = save_version(project_name, dossier_dict)
     files_saved.append(("Versão", version_path, version))
 
-    # Display summary
     _print_summary(dossier, files_saved)
 
 
