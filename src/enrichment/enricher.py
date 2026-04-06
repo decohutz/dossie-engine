@@ -40,7 +40,15 @@ def enrich_dossier(
         use_llm: Whether to use LLM to process web results
         verbose: Print progress
     """
+    import re
     company_name = dossier.company.profile.trade_name.value or dossier.metadata.target_company
+    if company_name:
+        # Strip common prefixes and parenthetical suffixes
+        for prefix in ["Grupo ", "Rede ", "Holding "]:
+            if company_name.startswith(prefix):
+                company_name = company_name[len(prefix):]
+                break
+        company_name = re.sub(r'\s*\(.*?\)\s*$', '', company_name).strip()
     # Strip common prefixes that mess up search queries
     for prefix in ["Grupo ", "Rede ", "Holding "]:
         if company_name and company_name.startswith(prefix):

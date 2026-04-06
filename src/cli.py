@@ -46,6 +46,7 @@ def process(
     output_format: str = typer.Option("md", "--format", "-f", help="Formato de saída: md, json, both"),
     no_llm: bool = typer.Option(False, "--no-llm", help="Desabilitar LLM e usar extração por regras"),
     enrich: bool = typer.Option(False, "--enrich", "-e", help="Enriquecer com dados da web (busca pública)"),
+    xlsx: bool = typer.Option(False, "--xlsx", help="Gerar planilha Excel (.xlsx)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
 ):
     """Processa um CIM/PDF e gera o dossiê completo."""
@@ -65,6 +66,8 @@ def process(
     _print(f"[bold]Extração:[/bold] {mode}")
     if enrich:
         _print(f"[bold]Enriquecimento:[/bold] Web (Reclame Aqui, Jusbrasil, Google)")
+    if xlsx:
+        _print(f"[bold]Excel:[/bold] Sim")
     _print("")
 
     version = get_next_version_number(project_name)
@@ -92,6 +95,12 @@ def process(
         with open(json_path, "w", encoding="utf-8") as f:
             f.write(js)
         files_saved.append(("JSON", json_path, f"{len(js):,} chars"))
+
+    if xlsx:
+        from .exporters.xlsx_exporter import export_xlsx
+        xlsx_path = f"data/outputs/dossie_{safe_name}.xlsx"
+        export_xlsx(dossier, xlsx_path, verbose=verbose)
+        files_saved.append(("Excel", xlsx_path, "10 abas"))
 
     full_json = to_json(dossier)
     dossier_dict = json.loads(full_json)
