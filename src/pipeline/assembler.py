@@ -120,7 +120,10 @@ def to_markdown(dossier: Dossier) -> str:
         lines.append("")
         for ms in dossier.market.market_sizes:
             cagr = f" (CAGR {ms.cagr*100:.1f}%)" if ms.cagr else ""
-            lines.append(f"- **{ms.geography}:** {ms.unit} {ms.value:.1f} ({ms.year}){cagr}")
+            value_str = f"{ms.value:.1f}" if ms.value is not None else "N/A"
+            unit_str = ms.unit or ""
+            geo_str = ms.geography or "N/A"
+            lines.append(f"- **{geo_str}:** {unit_str} {value_str} ({ms.year}){cagr}")
         lines.append("")
 
     if dossier.market.market_fragmentation.is_filled:

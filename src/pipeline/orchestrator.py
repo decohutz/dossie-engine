@@ -1,6 +1,6 @@
 """
 Pipeline orchestrator.
-Runs the full pipeline: parse → classify → extract (LLM or rules) → gaps → assemble.
+Runs the full pipeline: parse → classify → extract (LLM or rules) → gaps → enrich → assemble.
 """
 from __future__ import annotations
 import os
@@ -65,6 +65,7 @@ def run_pipeline(
     pdf_path: str,
     project_name: str = "",
     use_llm: bool = True,
+    enrich: bool = False,
     verbose: bool = False,
 ) -> Dossier:
     """Run the full dossier pipeline on a PDF file.
@@ -73,6 +74,7 @@ def run_pipeline(
         pdf_path: Path to the input PDF
         project_name: Name for the project
         use_llm: If True, use Ollama LLM for extraction. If False, fall back to rules.
+        enrich: If True, search the web to fill gaps marked with requires_internet.
         verbose: If True, print progress messages.
     """
     source_file = os.path.basename(pdf_path)
@@ -118,10 +120,17 @@ def run_pipeline(
         transaction=transaction,
     )
 
-    # Step 6: Gap analysis
+    # Step 5b: Gap analysis
     if verbose:
         print("Step 5: Analyzing gaps...")
     dossier.gaps = _analyze_gaps(dossier)
+
+    # Step 6: Web enrichment (optional)
+    if enrich:
+        if verbose:
+            print("Step 6: Web enrichment...")
+        from ..enrichment.enricher import enrich_dossier
+        dossier = enrich_dossier(dossier, use_llm=use_llm, verbose=verbose)
 
     return dossier
 
@@ -225,6 +234,7 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
         gaps.append(Gap("transaction", "transaction.opex_component", "important",
                         "Decomposição OPEX/CAPEX não identificada"))
 
+    # Internet-dependent gaps
     internet_gaps = [
         ("company", "company.reputation", "important", "Reputação (Reclame Aqui, Google)",
          "Reclame Aqui, Google Reviews"),
@@ -233,11 +243,22 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
         ("company", "company.employee_count", "important", "Quadro de funcionários detalhado",
          "LinkedIn, RAIS"),
     ]
+
     for chap, path, sev, desc, source in internet_gaps:
-        gaps.append(Gap(
-            chapter=chap, field_path=path, severity=sev,
-            description=f"{desc} — requer pesquisa externa",
-            suggested_source=source, requires_internet=True,
-        ))
+        # Only add gap if the field is still empty
+        should_add = True
+        if path == "company.reputation" and hasattr(p, 'reputation') and p.reputation.is_filled:
+            should_add = False
+        elif path == "company.litigation" and hasattr(p, 'litigation') and p.litigation.is_filled:
+            should_add = False
+        elif path == "company.employee_count" and p.number_of_employees.is_filled:
+            should_add = False
+
+        if should_add:
+            gaps.append(Gap(
+                chapter=chap, field_path=path, severity=sev,
+                description=f"{desc} — requer pesquisa externa",
+                suggested_source=source, requires_internet=True,
+            ))
 
     return gaps

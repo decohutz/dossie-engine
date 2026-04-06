@@ -45,6 +45,7 @@ def process(
     project: str = typer.Option("", "--project", "-p", help="Nome do projeto (ex: 'Projeto Frank')"),
     output_format: str = typer.Option("md", "--format", "-f", help="Formato de saída: md, json, both"),
     no_llm: bool = typer.Option(False, "--no-llm", help="Desabilitar LLM e usar extração por regras"),
+    enrich: bool = typer.Option(False, "--enrich", "-e", help="Enriquecer com dados da web (busca pública)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
 ):
     """Processa um CIM/PDF e gera o dossiê completo."""
@@ -61,11 +62,17 @@ def process(
     mode = "regras (sem LLM)" if no_llm else "LLM (Ollama)"
     _print(f"\n[bold]Processando:[/bold] {file}")
     _print(f"[bold]Projeto:[/bold] {project_name}")
-    _print(f"[bold]Extração:[/bold] {mode}\n")
+    _print(f"[bold]Extração:[/bold] {mode}")
+    if enrich:
+        _print(f"[bold]Enriquecimento:[/bold] Web (Reclame Aqui, Jusbrasil, Google)")
+    _print("")
 
     version = get_next_version_number(project_name)
 
-    dossier = run_pipeline(file, project_name=project_name, use_llm=not no_llm, verbose=verbose)
+    dossier = run_pipeline(
+        file, project_name=project_name,
+        use_llm=not no_llm, enrich=enrich, verbose=verbose
+    )
     dossier.metadata.version = version
 
     os.makedirs("data/outputs", exist_ok=True)
@@ -118,7 +125,6 @@ def show(
     elif format == "summary":
         _print_summary_from_dict(data)
     else:
-        # Regenerate markdown from saved data
         _print_summary_from_dict(data)
         _print(f"\n[dim]Para ver o Markdown completo: data/outputs/dossie_*.md[/dim]")
 
@@ -166,7 +172,6 @@ def gaps(
             web = " 🌐" if g.get("requires_internet") else ""
             _print(f"  [{sev}] {g['chapter']:12s} | {g['description']}{web}")
 
-    # Summary
     critical = sum(1 for g in gap_list if g["severity"] == "critical")
     important = sum(1 for g in gap_list if g["severity"] == "important")
     internet = sum(1 for g in gap_list if g.get("requires_internet"))
