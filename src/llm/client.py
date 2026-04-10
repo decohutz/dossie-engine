@@ -7,7 +7,7 @@ import json
 import urllib.request
 import urllib.error
 
-
+#DEFAULT_MODEL = "qwen3:14b"
 DEFAULT_MODEL = "qwen2.5:14b"
 DEFAULT_BASE_URL = "http://localhost:11434"
 

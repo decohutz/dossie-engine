@@ -56,12 +56,21 @@ ATENÇÃO CRÍTICA sobre o layout do PDF:
 - Cada COLUNA é um executivo: primeiro nome em cima, sobrenome embaixo, percentual abaixo
 - NÃO junte nomes de colunas diferentes
 
+ATENÇÃO sobre CARGOS e ENTIDADES:
+- O grupo pode ter várias entidades: Franqueadora, Distribuidora, Holding, Lojas Próprias
+- Cada executivo pode ter um cargo DIFERENTE em cada entidade
+- Se o texto mencionar a entidade junto ao cargo, INCLUA a entidade no campo "role"
+  Exemplo: "CEO da Distribuidora", "CFO da Franqueadora", "Fundador da Distribuidora e Franqueadora"
+- Se uma pessoa é "Fundador", especifique de qual(is) entidade(s)
+- Cuidado: "Fundador" e "CEO" podem ser pessoas DIFERENTES
+
 Retorne JSON no formato:
 {{
   "executives": [
     {{
       "name": "nome completo (primeiro nome + sobrenome da MESMA coluna)",
-      "role": "cargo na empresa",
+      "role": "cargo na empresa (incluir entidade se mencionada, ex: CEO da Distribuidora)",
+      "entity": "qual entidade do grupo (Franqueadora, Distribuidora, Holding, etc) ou null",
       "tenure_years": 10,
       "ownership_pct": 48.0,
       "background": "breve descrição da experiência ou null"
@@ -104,6 +113,12 @@ TEXTO:
 
 def prompt_products(text: str) -> tuple[str, str]:
     return SYSTEM_EXTRACTION, f"""Extraia os produtos, marcas e soluções da empresa mencionados no texto abaixo.
+
+ATENÇÃO sobre DEDUPLICAÇÃO:
+- NÃO liste o mesmo produto/categoria mais de uma vez
+- "Armações próprias", "Armações", "Armações da distribuição" são a MESMA categoria — liste apenas UMA VEZ como "Armações"
+- Diferencie entre CATEGORIAS de produto (Lentes, Armações, Solar, Contato) e MARCAS PRÓPRIAS (Paola Belle, Eurolens, etc.)
+- Marcas próprias devem ser listadas SEPARADAMENTE das categorias
 
 Retorne JSON no formato:
 {{

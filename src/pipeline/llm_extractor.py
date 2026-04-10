@@ -61,6 +61,26 @@ def _combine_texts(pages: list[ClassifiedPage], max_chars: int = 8000) -> list[t
     return chunks
 
 
+def _is_duplicate_product(name: str, existing: list[Product]) -> bool:
+    """Check if a product name is a duplicate of an existing one.
+
+    Catches cases like:
+    - Exact match (case-insensitive)
+    - Prefix match: "Armações" vs "Armações próprias" vs "Armações da distribuição"
+    - Substring match: "Lentes" vs "Lentes oftálmicas"
+    """
+    name_lower = name.lower().strip()
+    for p in existing:
+        existing_lower = p.name.lower().strip()
+        # Exact match
+        if name_lower == existing_lower:
+            return True
+        # One is a prefix of the other
+        if name_lower.startswith(existing_lower) or existing_lower.startswith(name_lower):
+            return True
+    return False
+
+
 def extract_company_llm(
     client: OllamaClient,
     classified: list[ClassifiedPage],
@@ -136,9 +156,15 @@ def extract_company_llm(
                     continue
                 name = _safe_str(ex.get("name"))
                 if name and not any(e.name == name for e in chapter.executives):
+                    # Build role with entity if available
+                    role = _safe_str(ex.get("role"))
+                    entity = _safe_str(ex.get("entity"))
+                    if entity and entity.lower() not in role.lower():
+                        role = f"{role} ({entity})"
+
                     chapter.executives.append(Executive(
                         name=name,
-                        role=_safe_str(ex.get("role")),
+                        role=role,
                         tenure_years=ex.get("tenure_years"),
                         ownership_pct=ex.get("ownership_pct"),
                         background=_safe_str(ex.get("background")) or None,
@@ -154,7 +180,7 @@ def extract_company_llm(
                 evidence=ex.evidence,
             ))
 
-    # --- TIMELINE: search ALL company pages ---
+    # --- TIMELINE: search ALL company pages, not just timeline sub_chapter ---
     if verbose:
         print(f"  [LLM] Extracting timeline from {len(company_pages)} company pages...")
 
@@ -170,6 +196,7 @@ def extract_company_llm(
                 year = ev.get("year")
                 desc = _safe_str(ev.get("description"))
                 if year and desc:
+                    # Allow multiple events per year (different descriptions)
                     if not any(t.year == year and t.description == desc for t in chapter.timeline):
                         pg = page_nums[0] if page_nums else 0
                         chapter.timeline.append(TimelineEvent(
@@ -202,7 +229,7 @@ def extract_company_llm(
                 if not isinstance(prod, dict):
                     continue
                 name = _safe_str(prod.get("name"))
-                if name and not any(p.name.lower() == name.lower() for p in chapter.products):
+                if name and not _is_duplicate_product(name, chapter.products):
                     chapter.products.append(Product(
                         name=name,
                         category=_safe_str(prod.get("category")),

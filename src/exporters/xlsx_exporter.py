@@ -3,6 +3,7 @@ Excel exporter for dossier data.
 Generates a multi-sheet .xlsx with financial statements, company overview, and market data.
 """
 from __future__ import annotations
+import re
 import json
 from pathlib import Path
 
@@ -63,6 +64,35 @@ def _is_margin_line(label: str) -> bool:
     return "Margem" in label or "%" in label
 
 
+def _clean_financial_label(label: str) -> str:
+    """Clean up labels that merged two lines from the PDF parser.
+
+    Fixes cases like:
+    - "(+/-) Outras Receitas/Despesas -- -- -- 2 31 -- -- -- -- -- Operacionais (=) EBITDA"
+    - "(+/-) Outras Receitas/Despesas Não -- -- -- 75 10 -- -- -- -- -- Operacionais (+/-) Resultado Financeiro"
+    """
+    # Remove embedded numeric values that leaked from data columns (-- and digits)
+    label = re.sub(r'\s+--(\s+--)*\s*', ' ', label)
+    label = re.sub(r'\s+\d+(\s+\d+)*\s+', ' ', label)
+
+    # If label contains (=) or (+/-) and is too long, it merged two lines
+    if len(label) > 50:
+        # Try to extract the last meaningful accounting label
+        # Pattern: "noise... (=) EBITDA" → "(=) EBITDA"
+        match = re.search(r'(\([=+/-]+\)\s*\w[\w\s&]*?)$', label)
+        if match:
+            label = match.group(1).strip()
+
+    # Remove stray "Operacionais" or "Não Operacionais" fragments
+    label = re.sub(r'\bOpera\w*\s*', '', label)
+    label = re.sub(r'\bNão\s*$', '', label)
+
+    # Clean up multiple spaces
+    label = re.sub(r'\s+', ' ', label).strip()
+
+    return label
+
+
 def _write_financial_sheet(ws, stmt, sheet_title: str):
     """Write a financial statement (DRE or Balance Sheet) to a worksheet."""
     if stmt is None or not stmt.lines:
@@ -90,12 +120,7 @@ def _write_financial_sheet(ws, stmt, sheet_title: str):
     # Data rows
     for i, line in enumerate(stmt.lines):
         row = header_row + 1 + i
-        label = line.label
-
-        # Clean up long merged labels
-        if "(=)" in label and len(label) > 60:
-            parts = label.split("(=)")
-            label = "(=)" + parts[-1].strip()
+        label = _clean_financial_label(line.label)
 
         # Label cell
         label_cell = ws.cell(row=row, column=1, value=label)
