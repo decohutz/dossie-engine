@@ -1,6 +1,11 @@
 """
 LLM-based data extraction.
 Replaces hardcoded rules with LLM calls for generic extraction from any CIM.
+
+Consistency features:
+- Retry with validation: if results are below threshold, retries and merges
+- Post-extraction validation: warns about suspicious data
+- Deduplication: products, timeline events
 """
 from __future__ import annotations
 from ..models.evidence import Evidence, TrackedField, FieldStatus
@@ -14,6 +19,12 @@ from ..models.market import (
 from ..llm.client import OllamaClient
 from ..llm import prompts
 from ..pipeline.classifier import ClassifiedPage
+
+
+# ── Minimum thresholds for retry ──────────────────────────────
+MIN_TIMELINE_EVENTS = 5
+MIN_PRODUCTS = 3
+MIN_EXECUTIVES = 3
 
 
 def _safe_str(val) -> str:
@@ -62,23 +73,90 @@ def _combine_texts(pages: list[ClassifiedPage], max_chars: int = 8000) -> list[t
 
 
 def _is_duplicate_product(name: str, existing: list[Product]) -> bool:
-    """Check if a product name is a duplicate of an existing one.
-
-    Catches cases like:
-    - Exact match (case-insensitive)
-    - Prefix match: "Armações" vs "Armações próprias" vs "Armações da distribuição"
-    - Substring match: "Lentes" vs "Lentes oftálmicas"
-    """
+    """Check if a product name is a duplicate of an existing one."""
     name_lower = name.lower().strip()
     for p in existing:
         existing_lower = p.name.lower().strip()
-        # Exact match
         if name_lower == existing_lower:
             return True
-        # One is a prefix of the other
         if name_lower.startswith(existing_lower) or existing_lower.startswith(name_lower):
             return True
     return False
+
+
+def _merge_timeline(existing: list[TimelineEvent], new_events: list[dict], source_file: str, page: int):
+    """Merge new timeline events into existing list, avoiding duplicates."""
+    for ev in new_events:
+        if not isinstance(ev, dict):
+            continue
+        year = ev.get("year")
+        desc = _safe_str(ev.get("description"))
+        if year and desc:
+            is_dup = False
+            for t in existing:
+                if t.year == year:
+                    if (t.description.lower()[:30] == desc.lower()[:30] or
+                            desc.lower() in t.description.lower() or
+                            t.description.lower() in desc.lower()):
+                        is_dup = True
+                        break
+            if not is_dup:
+                existing.append(TimelineEvent(
+                    year=year, description=desc,
+                    evidence=_evidence(source_file, page, f"{year}: {desc}"),
+                ))
+
+
+def _deduplicate_timeline(events: list[TimelineEvent]) -> list[TimelineEvent]:
+    """Deduplicate and sort timeline events."""
+    seen = set()
+    unique = []
+    for t in sorted(events, key=lambda x: x.year):
+        key = (t.year, t.description.lower().strip()[:40])
+        if key not in seen:
+            seen.add(key)
+            unique.append(t)
+    return unique
+
+
+def _validate_timeline(events: list[TimelineEvent], verbose: bool = False) -> list[str]:
+    """Validate timeline and return warnings."""
+    warnings = []
+    if len(events) < MIN_TIMELINE_EVENTS:
+        warnings.append(f"Timeline tem apenas {len(events)} eventos (mínimo esperado: {MIN_TIMELINE_EVENTS})")
+    for ev in events:
+        if ev.year < 1900 or ev.year > 2035:
+            warnings.append(f"Ano suspeito na timeline: {ev.year}")
+    return warnings
+
+
+def _validate_executives(executives: list[Executive], verbose: bool = False) -> list[str]:
+    """Validate executives and return warnings."""
+    warnings = []
+    if len(executives) < MIN_EXECUTIVES:
+        warnings.append(f"Apenas {len(executives)} executivos encontrados (mínimo esperado: {MIN_EXECUTIVES})")
+    for ex in executives:
+        if not ex.name or len(ex.name) < 3:
+            warnings.append(f"Nome de executivo suspeito: '{ex.name}'")
+        if not ex.role:
+            warnings.append(f"Executivo sem cargo: {ex.name}")
+        if ex.ownership_pct is not None and ex.ownership_pct > 100:
+            warnings.append(f"Participação > 100% para {ex.name}: {ex.ownership_pct}%")
+    total_pct = sum(ex.ownership_pct or 0 for ex in executives)
+    if total_pct > 105:
+        warnings.append(f"Soma das participações = {total_pct}% (> 100%)")
+    return warnings
+
+
+def _validate_products(products: list[Product], verbose: bool = False) -> list[str]:
+    """Validate products and return warnings."""
+    warnings = []
+    if len(products) < MIN_PRODUCTS:
+        warnings.append(f"Apenas {len(products)} produtos encontrados (mínimo esperado: {MIN_PRODUCTS})")
+    total_rev = sum(p.revenue_share_pct or 0 for p in products)
+    if total_rev > 105:
+        warnings.append(f"Soma dos % de receita = {total_rev}% (> 100%)")
+    return warnings
 
 
 def extract_company_llm(
@@ -87,14 +165,14 @@ def extract_company_llm(
     source_file: str,
     verbose: bool = False,
 ) -> CompanyChapter:
-    """Extract company data using LLM."""
+    """Extract company data using LLM with retry and validation."""
     chapter = CompanyChapter()
     profile = CompanyProfile()
 
     content_pages = _get_all_content_pages(classified)
     company_pages = _get_pages_for_chapter(classified, "company")
 
-    # --- PROFILE: first pass with overview pages ---
+    # ── PROFILE ──────────────────────────────────────────────
     overview_pages = content_pages[:12]
     chunks = _combine_texts(overview_pages)
 
@@ -120,7 +198,7 @@ def extract_company_llm(
                     setattr(profile, field_name, _tracked(val, source_file, pg, field_name))
             break
 
-    # --- PROFILE: second pass if key fields still empty ---
+    # Second pass for missing key fields
     empty_fields = []
     for f in ["legal_name", "headquarters", "number_of_employees"]:
         if getattr(profile, f).is_empty:
@@ -141,7 +219,7 @@ def extract_company_llm(
                     if val and getattr(profile, field_name).is_empty:
                         setattr(profile, field_name, _tracked(val, source_file, pg, field_name))
 
-    # --- EXECUTIVES ---
+    # ── EXECUTIVES ───────────────────────────────────────────
     if verbose:
         print(f"  [LLM] Extracting executives...")
 
@@ -156,7 +234,6 @@ def extract_company_llm(
                     continue
                 name = _safe_str(ex.get("name"))
                 if name and not any(e.name == name for e in chapter.executives):
-                    # Build role with entity if available
                     role = _safe_str(ex.get("role"))
                     entity = _safe_str(ex.get("entity"))
                     if entity and entity.lower() not in role.lower():
@@ -171,7 +248,13 @@ def extract_company_llm(
                         evidence=_evidence(source_file, page.block.page_number, name),
                     ))
 
-    # --- SHAREHOLDERS ---
+    # Validate executives
+    exec_warnings = _validate_executives(chapter.executives, verbose)
+    if verbose and exec_warnings:
+        for w in exec_warnings:
+            print(f"    ⚠️  {w}")
+
+    # ── SHAREHOLDERS ─────────────────────────────────────────
     for ex in chapter.executives:
         if ex.ownership_pct and ex.ownership_pct > 5.0:
             chapter.shareholders.append(Shareholder(
@@ -180,7 +263,7 @@ def extract_company_llm(
                 evidence=ex.evidence,
             ))
 
-    # --- TIMELINE: search ALL company pages, not just timeline sub_chapter ---
+    # ── TIMELINE with retry ──────────────────────────────────
     if verbose:
         print(f"  [LLM] Extracting timeline from {len(company_pages)} company pages...")
 
@@ -190,31 +273,37 @@ def extract_company_llm(
         data = client.extract_json(prompt, system)
 
         if data and isinstance(data, dict):
-            for ev in (data.get("events") or []):
-                if not isinstance(ev, dict):
-                    continue
-                year = ev.get("year")
-                desc = _safe_str(ev.get("description"))
-                if year and desc:
-                    # Allow multiple events per year (different descriptions)
-                    if not any(t.year == year and t.description == desc for t in chapter.timeline):
-                        pg = page_nums[0] if page_nums else 0
-                        chapter.timeline.append(TimelineEvent(
-                            year=year, description=desc,
-                            evidence=_evidence(source_file, pg, f"{year}: {desc}"),
-                        ))
+            pg = page_nums[0] if page_nums else 0
+            _merge_timeline(chapter.timeline, data.get("events") or [], source_file, pg)
 
-    # Deduplicate: keep unique year+description, sort by year
-    seen = set()
-    unique_timeline = []
-    for t in sorted(chapter.timeline, key=lambda x: x.year):
-        key = (t.year, t.description[:50])
-        if key not in seen:
-            seen.add(key)
-            unique_timeline.append(t)
-    chapter.timeline = unique_timeline
+    chapter.timeline = _deduplicate_timeline(chapter.timeline)
 
-    # --- PRODUCTS: search ALL company pages ---
+    # Retry if below threshold
+    if len(chapter.timeline) < MIN_TIMELINE_EVENTS:
+        if verbose:
+            print(f"    🔄 Timeline has {len(chapter.timeline)} events (< {MIN_TIMELINE_EVENTS}), retrying...")
+
+        all_chunks = _combine_texts(content_pages)
+        for text, page_nums in all_chunks:
+            system, prompt = prompts.prompt_timeline(text)
+            data = client.extract_json(prompt, system, temperature=0.05)
+
+            if data and isinstance(data, dict):
+                pg = page_nums[0] if page_nums else 0
+                _merge_timeline(chapter.timeline, data.get("events") or [], source_file, pg)
+
+        chapter.timeline = _deduplicate_timeline(chapter.timeline)
+
+        if verbose:
+            print(f"    → After retry: {len(chapter.timeline)} events")
+
+    # Validate timeline
+    tl_warnings = _validate_timeline(chapter.timeline, verbose)
+    if verbose and tl_warnings:
+        for w in tl_warnings:
+            print(f"    ⚠️  {w}")
+
+    # ── PRODUCTS with retry ──────────────────────────────────
     if verbose:
         print(f"  [LLM] Extracting products from {len(company_pages)} company pages...")
 
@@ -239,6 +328,41 @@ def extract_company_llm(
                         evidence=_evidence(source_file, pg, name),
                     ))
 
+    # Retry if below threshold
+    if len(chapter.products) < MIN_PRODUCTS:
+        if verbose:
+            print(f"    🔄 Products has {len(chapter.products)} items (< {MIN_PRODUCTS}), retrying...")
+
+        all_chunks = _combine_texts(content_pages)
+        for text, page_nums in all_chunks:
+            system, prompt = prompts.prompt_products(text)
+            data = client.extract_json(prompt, system, temperature=0.05)
+
+            if data and isinstance(data, dict):
+                pg = page_nums[0] if page_nums else 0
+                for prod in (data.get("products") or []):
+                    if not isinstance(prod, dict):
+                        continue
+                    name = _safe_str(prod.get("name"))
+                    if name and not _is_duplicate_product(name, chapter.products):
+                        chapter.products.append(Product(
+                            name=name,
+                            category=_safe_str(prod.get("category")),
+                            revenue_share_pct=prod.get("revenue_share_pct"),
+                            is_proprietary=prod.get("is_proprietary", False),
+                            description=_safe_str(prod.get("description")) or None,
+                            evidence=_evidence(source_file, pg, name),
+                        ))
+
+        if verbose:
+            print(f"    → After retry: {len(chapter.products)} products")
+
+    # Validate products
+    prod_warnings = _validate_products(chapter.products, verbose)
+    if verbose and prod_warnings:
+        for w in prod_warnings:
+            print(f"    ⚠️  {w}")
+
     chapter.profile = profile
     return chapter
 
@@ -256,7 +380,7 @@ def extract_market_llm(
     if not market_pages:
         return chapter
 
-    # --- MARKET SIZE & FRAGMENTATION ---
+    # ── MARKET SIZE & FRAGMENTATION ──────────────────────────
     if verbose:
         print(f"  [LLM] Extracting market data from {len(market_pages)} pages...")
 
@@ -296,7 +420,35 @@ def extract_market_llm(
                 if barrier and not any(b.value == barrier for b in chapter.barriers_to_entry):
                     chapter.barriers_to_entry.append(_tracked(barrier, source_file, pg))
 
-    # --- COMPETITORS ---
+    # Retry market sizes if empty
+    if len(chapter.market_sizes) == 0:
+        if verbose:
+            print(f"    🔄 No market sizes found, retrying with broader search...")
+        content_pages = _get_all_content_pages(classified)
+        for page in content_pages:
+            text_lower = page.block.clean_text.lower()
+            if any(kw in text_lower for kw in ["mercado", "market", "usd", "brl", "bn", "bilh"]):
+                system, prompt = prompts.prompt_market(page.block.clean_text)
+                data = client.extract_json(prompt, system, temperature=0.05)
+                if data and isinstance(data, dict):
+                    for ms in (data.get("market_sizes") or []):
+                        if not isinstance(ms, dict):
+                            continue
+                        geo = _safe_str(ms.get("geography"))
+                        year = ms.get("year", 0)
+                        if geo and year and not any(
+                            m.geography == geo and m.year == year for m in chapter.market_sizes
+                        ):
+                            chapter.market_sizes.append(MarketSize(
+                                geography=geo, value=ms.get("value", 0),
+                                unit=_safe_str(ms.get("unit")), year=year,
+                                cagr=ms.get("cagr"),
+                                evidence=_evidence(source_file, page.block.page_number, f"{geo} {year}"),
+                            ))
+        if verbose:
+            print(f"    → After retry: {len(chapter.market_sizes)} market sizes")
+
+    # ── COMPETITORS ──────────────────────────────────────────
     if verbose:
         print(f"  [LLM] Extracting competitors...")
 
@@ -321,7 +473,7 @@ def extract_market_llm(
                             evidence=_evidence(source_file, page.block.page_number, name),
                         ))
 
-    # --- MULTIPLES / PRECEDENT TRANSACTIONS ---
+    # ── MULTIPLES / PRECEDENT TRANSACTIONS ───────────────────
     if verbose:
         print(f"  [LLM] Extracting multiples...")
 
@@ -346,13 +498,19 @@ def extract_market_llm(
                     buyer = _safe_str(txn.get("buyer"))
                     target = _safe_str(txn.get("target"))
                     if buyer and target:
+                        ev_ebitda = txn.get("ev_ebitda")
+                        if ev_ebitda is not None and ev_ebitda > 50:
+                            if verbose:
+                                print(f"    ⚠️  EV/EBITDA suspeito: {ev_ebitda}x para {buyer}/{target}")
+                            ev_ebitda = None
+
                         chapter.precedent_transactions.append(PrecedentTransaction(
                             date=_safe_str(txn.get("date")),
                             buyer=buyer, target=target,
                             stake_pct=txn.get("stake_pct"),
                             value=_safe_str(txn.get("value")),
                             ev_revenue=txn.get("ev_revenue"),
-                            ev_ebitda=txn.get("ev_ebitda"),
+                            ev_ebitda=ev_ebitda,
                             evidence=_evidence(source_file, page.block.page_number, f"{buyer} -> {target}"),
                         ))
 
@@ -371,7 +529,6 @@ def extract_transaction_llm(
     tx_pages = _get_pages_for_chapter(classified, "transaction")
     content_pages = _get_all_content_pages(classified)
 
-    # Broader search: transaction pages + first 8 + last 5 content pages
     candidate_pages = tx_pages + content_pages[:8] + content_pages[-5:]
     seen = set()
     unique_pages = []
