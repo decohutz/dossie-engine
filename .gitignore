@@ -11,6 +11,12 @@ venv/
 data/inputs/*
 data/outputs/*
 data/versions/*
+data/inputs/
+data/outputs/
+data/versions/
+*.pdf
+*.xlsx
+*.pptx
 !data/inputs/.gitkeep
 !data/outputs/.gitkeep
 !data/versions/.gitkeep
