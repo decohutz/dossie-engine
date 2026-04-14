@@ -48,6 +48,7 @@ def process(
     enrich: bool = typer.Option(False, "--enrich", "-e", help="Enriquecer com dados da web (busca pública)"),
     xlsx: bool = typer.Option(False, "--xlsx", help="Gerar planilha Excel (.xlsx)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
+    pptx: bool = typer.Option(False, "--pptx", help="Gerar apresentação PowerPoint (.pptx)"),
 ):
     """Processa um CIM/PDF e gera o dossiê completo."""
     from .pipeline.orchestrator import run_pipeline
@@ -68,6 +69,8 @@ def process(
         _print(f"[bold]Enriquecimento:[/bold] Web (Reclame Aqui, Jusbrasil, Google)")
     if xlsx:
         _print(f"[bold]Excel:[/bold] Sim")
+    if pptx:
+        _print(f"[bold]PPT:[/bold] Sim")
     _print("")
 
     version = get_next_version_number(project_name)
@@ -101,6 +104,12 @@ def process(
         xlsx_path = f"data/outputs/dossie_{safe_name}.xlsx"
         export_xlsx(dossier, xlsx_path, verbose=verbose)
         files_saved.append(("Excel", xlsx_path, "10 abas"))
+
+    if pptx:
+        from .exporters.pptx_exporter import export_pptx
+        pptx_path = f"data/outputs/dossie_{safe_name}.pptx"
+        export_pptx(dossier, pptx_path, verbose=verbose)
+        files_saved.append(("PPT", pptx_path, "13 slides"))
 
     full_json = to_json(dossier)
     dossier_dict = json.loads(full_json)
