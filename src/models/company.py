@@ -18,6 +18,8 @@ class CompanyProfile:
     target_audience: TrackedField = field(default_factory=TrackedField.empty)
     number_of_stores: TrackedField = field(default_factory=TrackedField.empty)
     number_of_employees: TrackedField = field(default_factory=TrackedField.empty)
+    reputation: TrackedField = field(default_factory=TrackedField.empty)
+    litigation: TrackedField = field(default_factory=TrackedField.empty)
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k).to_dict() for k in self.__dataclass_fields__}
