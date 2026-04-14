@@ -11,6 +11,9 @@ venv/
 data/inputs/*
 data/outputs/*
 data/versions/*
+data/inputs/
+data/outputs/
+data/versions/
 !data/inputs/.gitkeep
 !data/outputs/.gitkeep
 !data/versions/.gitkeep
