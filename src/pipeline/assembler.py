@@ -4,7 +4,44 @@ Generates Markdown and JSON output from a populated Dossier.
 """
 from __future__ import annotations
 import json
+import re
 from ..models.dossier import Dossier
+
+
+def _clean_label(label: str) -> str:
+    """Clean DRE/balance labels that merged two lines from the PDF parser.
+
+    Fixes cases like:
+    - "(+/-) Outras Receitas/Despesas -- -- -- 2 31 -- -- -- -- -- Operacionais (=) EBITDA"
+    - "(+/-) Outras Receitas/Despesas Não -- -- -- 75 10 -- -- -- -- -- Operacionais"
+    """
+    # Remove embedded numeric values that leaked from data columns
+    label = re.sub(r'\s+--(\s+--)*\s*', ' ', label)
+    label = re.sub(r'\s+\d+(\s+\d+)*\s+', ' ', label)
+
+    # If label contains (=) or (+/-) and is too long, it merged two lines
+    if len(label) > 50:
+        match = re.search(r'(\([=+/-]+\)\s*\w[\w\s&]*?)$', label)
+        if match:
+            label = match.group(1).strip()
+
+    # Remove stray fragments
+    label = re.sub(r'\bOpera\w*\s*', '', label)
+    label = re.sub(r'\bNão\s*$', '', label)
+
+    return re.sub(r'\s+', ' ', label).strip()
+
+
+def _fmt_cagr(cagr) -> str:
+    """Format CAGR auto-detecting decimal vs percentage.
+
+    0.033 → '3.3%'  (decimal, multiply by 100)
+    3.3   → '3.3%'  (already percentage, keep as is)
+    """
+    if cagr is None:
+        return ""
+    cagr_pct = cagr * 100 if cagr < 1 else cagr
+    return f" (CAGR {cagr_pct:.1f}%)"
 
 
 def to_json(dossier: Dossier, indent: int = 2) -> str:
@@ -69,7 +106,7 @@ def to_markdown(dossier: Dossier) -> str:
         for ex in dossier.company.executives:
             pct = f"{ex.ownership_pct:.0f}%" if ex.ownership_pct else "-"
             tenure = f"{ex.tenure_years}+" if ex.tenure_years else "N/D"
-            lines.append(f"| {ex.name} | {ex.role} | {tenure} | {pct} |")
+            lines.append(f"| {ex.name} | {ex.role or '—'} | {tenure} | {pct} |")
         lines.append("")
 
     if dossier.company.products:
@@ -99,6 +136,7 @@ def to_markdown(dossier: Dossier) -> str:
             lines.append("| Linha | " + " | ".join(years) + " |")
             lines.append("|-------|" + "|".join(["-------:" for _ in years]) + "|")
             for fl in stmt.lines:
+                clean = _clean_label(fl.label)
                 vals = []
                 for y in years:
                     v = fl.values.get(y)
@@ -108,7 +146,7 @@ def to_markdown(dossier: Dossier) -> str:
                         vals.append(f"{v*100:.1f}%")
                     else:
                         vals.append(f"{v:,.0f}")
-                lines.append(f"| {fl.label[:45]} | " + " | ".join(vals) + " |")
+                lines.append(f"| {clean[:45]} | " + " | ".join(vals) + " |")
             lines.append("")
 
     # --- Market ---
@@ -119,7 +157,7 @@ def to_markdown(dossier: Dossier) -> str:
         lines.append("### Tamanho de mercado")
         lines.append("")
         for ms in dossier.market.market_sizes:
-            cagr = f" (CAGR {ms.cagr*100:.1f}%)" if ms.cagr else ""
+            cagr = _fmt_cagr(ms.cagr)
             value_str = f"{ms.value:.1f}" if ms.value is not None else "N/A"
             unit_str = ms.unit or ""
             geo_str = ms.geography or "N/A"

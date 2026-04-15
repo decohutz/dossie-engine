@@ -20,6 +20,13 @@ from ..llm.client import OllamaClient
 from ..llm import prompts
 from ..pipeline.classifier import ClassifiedPage
 
+# Enhanced extraction (optional dependencies)
+try:
+    from ..parsers.ocr_helper import extract_layout_text, ocr_page, is_ocr_available
+    HAS_ENHANCED = True
+except ImportError:
+    HAS_ENHANCED = False
+
 
 # ── Minimum thresholds for retry ──────────────────────────────
 MIN_TIMELINE_EVENTS = 5
@@ -164,6 +171,7 @@ def extract_company_llm(
     classified: list[ClassifiedPage],
     source_file: str,
     verbose: bool = False,
+    pdf_path: str = "",
 ) -> CompanyChapter:
     """Extract company data using LLM with retry and validation."""
     chapter = CompanyChapter()
@@ -219,11 +227,13 @@ def extract_company_llm(
                     if val and getattr(profile, field_name).is_empty:
                         setattr(profile, field_name, _tracked(val, source_file, pg, field_name))
 
-    # ── EXECUTIVES ───────────────────────────────────────────
+    # ── EXECUTIVES (regular first, layout as retry) ────────────
     if verbose:
         print(f"  [LLM] Extracting executives...")
 
     exec_pages = [p for p in classified if p.sub_chapter == "team"] or company_pages
+
+    # First pass: regular text (stable)
     for page in exec_pages:
         system, prompt = prompts.prompt_executives(page.block.clean_text)
         data = client.extract_json(prompt, system)
@@ -247,6 +257,47 @@ def extract_company_llm(
                         background=_safe_str(ex.get("background")) or None,
                         evidence=_evidence(source_file, page.block.page_number, name),
                     ))
+
+    # Retry pass: if any executive has empty role, retry with layout text
+    execs_without_role = [e for e in chapter.executives if not e.role]
+    if execs_without_role and HAS_ENHANCED and pdf_path:
+        if verbose:
+            names = ", ".join(e.name for e in execs_without_role)
+            print(f"    🔄 Retrying with layout text for: {names}")
+
+        for page in exec_pages:
+            layout_text = extract_layout_text(pdf_path, page.block.page_number, verbose)
+            if not layout_text or len(layout_text) < 50:
+                continue
+
+            if verbose:
+                print(f"    📐 Layout retry on page {page.block.page_number}")
+
+            page_text = (
+                f"LAYOUT COLUMNAR (cada linha separada por | é uma coluna):\n{layout_text}\n\n"
+                f"TEXTO ORIGINAL:\n{page.block.clean_text}"
+            )
+            system, prompt = prompts.prompt_executives(page_text)
+            data = client.extract_json(prompt, system, temperature=0.05)
+
+            if data and isinstance(data, dict):
+                for ex in (data.get("executives") or []):
+                    if not isinstance(ex, dict):
+                        continue
+                    name = _safe_str(ex.get("name"))
+                    role = _safe_str(ex.get("role"))
+                    if not name or not role:
+                        continue
+                    # Update only executives that had missing roles
+                    for existing in chapter.executives:
+                        if existing.name == name and not existing.role:
+                            existing.role = role
+                            entity = _safe_str(ex.get("entity"))
+                            if entity and entity.lower() not in role.lower():
+                                existing.role = f"{role} ({entity})"
+                            if verbose:
+                                print(f"    ✅ {name} → {existing.role}")
+                            break
 
     # Validate executives
     exec_warnings = _validate_executives(chapter.executives, verbose)
@@ -372,6 +423,7 @@ def extract_market_llm(
     classified: list[ClassifiedPage],
     source_file: str,
     verbose: bool = False,
+    pdf_path: str = "",
 ) -> MarketChapter:
     """Extract market data using LLM."""
     chapter = MarketChapter()
@@ -448,14 +500,23 @@ def extract_market_llm(
         if verbose:
             print(f"    → After retry: {len(chapter.market_sizes)} market sizes")
 
-    # ── COMPETITORS ──────────────────────────────────────────
+    # ── COMPETITORS (with OCR for logos) ───────────────────────
     if verbose:
         print(f"  [LLM] Extracting competitors...")
 
     for page in market_pages:
         text_lower = page.block.clean_text.lower()
         if "top 5" in text_lower or "companhias" in text_lower or "concorrent" in text_lower:
-            system, prompt = prompts.prompt_competitors(page.block.clean_text)
+            # Try OCR to capture logo text
+            page_text = page.block.clean_text
+            if HAS_ENHANCED and pdf_path and is_ocr_available():
+                ocr_text = ocr_page(pdf_path, page.block.page_number, verbose=verbose)
+                if ocr_text:
+                    if verbose:
+                        print(f"    🔍 OCR enriching competitor page {page.block.page_number}")
+                    page_text = f"{page.block.clean_text}\n\nTEXTO ADICIONAL EXTRAÍDO DE IMAGENS/LOGOS:\n{ocr_text}"
+
+            system, prompt = prompts.prompt_competitors(page_text)
             data = client.extract_json(prompt, system)
 
             if data and isinstance(data, dict):
