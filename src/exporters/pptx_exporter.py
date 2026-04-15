@@ -201,7 +201,10 @@ def _slide_cover(prs, dossier: Dossier):
            fill=RGBColor(0x2D, 0x3A, 0x6E), line_color=RGBColor(0x4A, 0x5A, 0x9A), line_width=0.5)
     _text(slide, "CONFIDENCIAL", 0.8, 5.62, 2.0, 0.35, size=10, color=ICE_BLUE, bold=True, align=PP_ALIGN.CENTER)
 
-    _text(slide, datetime.now().strftime("%B %Y"), 0.8, 6.2, 3, 0.4, size=12, color=MUTED)
+    _MONTHS_PT = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
+                  7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
+    now = datetime.now()
+    _text(slide, f"{_MONTHS_PT[now.month]} {now.year}", 0.8, 6.2, 3, 0.4, size=12, color=MUTED)
 
     # Right side KPIs
     _shape(slide, MSO_SHAPE.RECTANGLE, 11.5, 1.5, 0.04, 4.5, fill=ACCENT)
@@ -253,19 +256,19 @@ def _slide_summary(prs, dossier: Dossier):
 
     info = []
     if p.business_model.value:
-        info.append(("Modelo", str(p.business_model.value)[:60]))
+        info.append(("Modelo", str(p.business_model.value)[:80]))
     if p.headquarters.value:
         info.append(("Sede", str(p.headquarters.value)))
     if p.target_audience.value:
-        info.append(("Público-Alvo", str(p.target_audience.value)[:60]))
+        info.append(("Público-Alvo", str(p.target_audience.value)[:80]))
     t = dossier.transaction
     if t.advisor.value:
         info.append(("Advisor", str(t.advisor.value)))
 
     for i, (label, value) in enumerate(info[:5]):
-        y = 3.8 + i * 0.55
+        y = 3.8 + i * 0.6
         _text(slide, label, 7.5, y, 2, 0.22, size=9, color=MUTED, bold=True)
-        _text(slide, value, 7.5, y + 0.2, 5.3, 0.3, size=12, color=DARK_TEXT)
+        _text(slide, value, 7.5, y + 0.2, 5.5, 0.4, size=11, color=DARK_TEXT)
 
     _footer(slide, dossier.metadata.project_name, 2)
 
@@ -283,39 +286,39 @@ def _slide_company(prs, dossier: Dossier):
         ("Razão Social", _safe(p.legal_name.value)),
         ("Nome Fantasia", _safe(p.trade_name.value)),
         ("Setor", _safe(p.sector.value)),
-        ("Modelo de Negócio", _safe(p.business_model.value)),
-        ("Público-Alvo", _safe(p.target_audience.value)),
+        ("Modelo de Negócio", _safe(p.business_model.value)[:70]),
+        ("Público-Alvo", _safe(p.target_audience.value)[:70]),
         ("Sede", _safe(p.headquarters.value)),
         ("Fundação", _safe(p.founding_year.value)),
         ("Nº Lojas", _safe(p.number_of_stores.value)),
         ("Nº Funcionários", _safe(p.number_of_employees.value)),
     ]
 
-    # Two columns
+    # Two columns: long fields left, short fields right
     col1 = fields[:5]
     col2 = fields[5:]
 
     for i, (label, val) in enumerate(col1):
-        y = 1.3 + i * 0.65
-        _text(slide, label, 0.8, y, 2.5, 0.25, size=10, color=MUTED, bold=True)
-        _text(slide, val, 0.8, y + 0.22, 5.5, 0.35, size=13, color=DARK_TEXT)
+        y = 1.3 + i * 0.75
+        _text(slide, label, 0.8, y, 2.5, 0.22, size=10, color=MUTED, bold=True)
+        _text(slide, val, 0.8, y + 0.2, 5.5, 0.45, size=12, color=DARK_TEXT)
         if i < len(col1) - 1:
-            _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, y + 0.55, 5.5, 0.007, fill=BORDER_LIGHT)
+            _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, y + 0.65, 5.5, 0.007, fill=BORDER_LIGHT)
 
     for i, (label, val) in enumerate(col2):
-        y = 1.3 + i * 0.65
-        _text(slide, label, 7.3, y, 2.5, 0.25, size=10, color=MUTED, bold=True)
-        _text(slide, val, 7.3, y + 0.22, 5.0, 0.35, size=13, color=DARK_TEXT)
+        y = 1.3 + i * 0.75
+        _text(slide, label, 7.3, y, 2.5, 0.22, size=10, color=MUTED, bold=True)
+        _text(slide, val, 7.3, y + 0.2, 5.0, 0.45, size=12, color=DARK_TEXT)
         if i < len(col2) - 1:
-            _shape(slide, MSO_SHAPE.RECTANGLE, 7.3, y + 0.55, 5.0, 0.007, fill=BORDER_LIGHT)
+            _shape(slide, MSO_SHAPE.RECTANGLE, 7.3, y + 0.65, 5.0, 0.007, fill=BORDER_LIGHT)
 
     # Description box
     if p.description.value:
-        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 4.8, 11.7, 1.5,
+        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 5.2, 11.7, 1.3,
                fill=WHITE, line_color=BORDER_LIGHT, line_width=0.5)
-        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 4.8, 0.06, 1.5, fill=ACCENT)
-        _text(slide, "Descrição", 1.1, 4.9, 3, 0.3, size=12, color=NAVY, bold=True)
-        _text(slide, str(p.description.value), 1.1, 5.2, 11.0, 1.0, size=11, color=DARK_TEXT)
+        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 5.2, 0.06, 1.3, fill=ACCENT)
+        _text(slide, "Descrição", 1.1, 5.3, 3, 0.3, size=12, color=NAVY, bold=True)
+        _text(slide, str(p.description.value), 1.1, 5.6, 11.0, 0.8, size=11, color=DARK_TEXT)
 
     _footer(slide, dossier.metadata.project_name, 3)
 
@@ -334,7 +337,7 @@ def _slide_executives(prs, dossier: Dossier):
         rows = []
         for ex in execs:
             pct = f"{ex.ownership_pct}%" if ex.ownership_pct else "—"
-            bg = (ex.background or "—")[:50]
+            bg = (ex.background or "—")[:80]
             rows.append([ex.name, ex.role or "—", pct, bg])
 
         _add_table(slide, headers, rows, 0.8, 1.3, 11.7)
@@ -590,9 +593,14 @@ def _slide_market(prs, dossier: Dossier):
     ms_list = dossier.market.market_sizes
     for i, ms in enumerate(ms_list[:3]):
         x = 0.8 + i * 4.1
-        val = f"{ms.unit} {ms.value}" if ms.value else "—"
+        val = f"{ms.unit} {ms.value:,.1f}" if ms.value else f"{ms.unit} —"
         label = f"Mercado {ms.geography} {ms.year}"
-        cagr = f"CAGR {ms.cagr * 100:.1f}%" if ms.cagr else "—"
+        # Auto-detect CAGR format: <1 = decimal (0.033), >=1 = already percentage (3.3)
+        if ms.cagr:
+            cagr_pct = ms.cagr * 100 if ms.cagr < 1 else ms.cagr
+            cagr = f"CAGR {cagr_pct:.1f}%"
+        else:
+            cagr = "—"
         accent = [ACCENT, ACCENT_GREEN, NAVY][i % 3]
         _side_card(slide, val, label, cagr, x, 1.3, accent=accent)
 
