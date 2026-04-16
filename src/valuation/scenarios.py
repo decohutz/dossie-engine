@@ -277,19 +277,22 @@ def build_scenarios(
     pess_models = []
     for name, stmt in entities:
         base_a = base_assumptions_by_entity.get(name, ModelAssumptions())
-        overrides = {
-            "revenue_growth_rate": _adjust_growth(base_a.revenue_growth_rate, pessimistic_factor),
-            "cogs_pct_revenue": base_a.cogs_pct_revenue * 1.1,   # 10% worse COGS
-            "sga_pct_revenue": base_a.sga_pct_revenue * 1.05,    # 5% worse SG&A
+        # Scale CIM projections down: revenue × pessimistic_factor, worse margins
+        adj_factors = {
+            "revenue_factor": pessimistic_factor,     # e.g., 0.6 = 40% lower revenue
+            "cogs_factor": 1.10,                      # 10% worse COGS ratio
+            "sga_factor": 1.05,                       # 5% worse SG&A ratio
         }
-        model = build_entity_model(stmt, name, overrides, verbose=False)
+        model = build_entity_model(
+            stmt, name, verbose=False, adjustment_factors=adj_factors,
+        )
         model.assumptions.label = "Pessimista"
         pess_models.append(model)
 
     engine.pessimistic = Scenario(
         name="Pessimista",
         label="Caso Pessimista",
-        description=f"Crescimento {(1-pessimistic_factor)*100:.0f}% abaixo do plano, "
+        description=f"Receita {(1-pessimistic_factor)*100:.0f}% abaixo do plano, "
                     f"pressão em margens",
         models=pess_models,
     )
@@ -311,19 +314,22 @@ def build_scenarios(
     opt_models = []
     for name, stmt in entities:
         base_a = base_assumptions_by_entity.get(name, ModelAssumptions())
-        overrides = {
-            "revenue_growth_rate": _adjust_growth(base_a.revenue_growth_rate, optimistic_factor),
-            "cogs_pct_revenue": base_a.cogs_pct_revenue * 0.95,  # 5% better COGS
-            "sga_pct_revenue": base_a.sga_pct_revenue * 0.97,    # 3% better SG&A
+        # Scale CIM projections up: revenue × optimistic_factor, better margins
+        adj_factors = {
+            "revenue_factor": optimistic_factor,      # e.g., 1.3 = 30% higher revenue
+            "cogs_factor": 0.95,                      # 5% better COGS ratio
+            "sga_factor": 0.97,                       # 3% better SG&A ratio
         }
-        model = build_entity_model(stmt, name, overrides, verbose=False)
+        model = build_entity_model(
+            stmt, name, verbose=False, adjustment_factors=adj_factors,
+        )
         model.assumptions.label = "Otimista"
         opt_models.append(model)
 
     engine.optimistic = Scenario(
         name="Otimista",
         label="Caso Otimista",
-        description=f"Crescimento {(optimistic_factor-1)*100:.0f}% acima do plano, "
+        description=f"Receita {(optimistic_factor-1)*100:.0f}% acima do plano, "
                     f"ganhos de escala em margens",
         models=opt_models,
     )

@@ -363,11 +363,77 @@ def _project_years(
     return projected
 
 
+def _adjust_projections(
+    existing: list[ProjectionYear],
+    factors: dict,
+    assumptions: ModelAssumptions,
+) -> list[ProjectionYear]:
+    """Adjust CIM projections by scaling factors.
+
+    Preserves the shape of the company plan while scaling key line items.
+    This is the preferred method for scenario analysis because it keeps
+    structural elements like ramp-ups (e.g., Lojas Próprias going from 0 to 90k).
+
+    Args:
+        existing: CIM projected years
+        factors: Dict with revenue_factor, cogs_factor, sga_factor
+        assumptions: For CAPEX/NWC estimation
+    """
+    from copy import deepcopy
+
+    rev_factor = factors.get("revenue_factor", 1.0)
+    cogs_factor = factors.get("cogs_factor", 1.0)
+    sga_factor = factors.get("sga_factor", 1.0)
+
+    adjusted = []
+    for orig in existing:
+        py = deepcopy(orig)
+
+        # Scale revenue
+        py.gross_revenue = orig.gross_revenue * rev_factor
+        py.taxes_deductions = orig.taxes_deductions * rev_factor
+        py.net_revenue = orig.net_revenue * rev_factor
+
+        # Scale costs (factors > 1 = worse margins)
+        py.cogs = orig.cogs * cogs_factor * rev_factor
+        py.gross_profit = py.net_revenue + py.cogs
+        py.sga = orig.sga * sga_factor * rev_factor
+
+        # Recalculate EBITDA
+        py.ebitda = py.gross_profit + py.sga
+        py.ebitda_margin = py.ebitda / py.net_revenue if py.net_revenue else 0
+
+        # Below EBITDA: scale proportionally
+        py.da = orig.da * rev_factor
+        py.ebit = py.ebitda + py.da
+        py.financial_result = orig.financial_result * rev_factor
+        py.ebt = py.ebit + py.financial_result
+
+        # Taxes
+        if py.ebt > 0:
+            py.ir_csll = -abs(py.ebt * assumptions.ir_csll_pct_ebt)
+        else:
+            py.ir_csll = 0
+        py.net_income = py.ebt + py.ir_csll
+        py.net_margin = py.net_income / py.net_revenue if py.net_revenue else 0
+
+        # FCF
+        py.capex = -abs(py.net_revenue * assumptions.capex_pct_revenue)
+        py.nwc_change = -abs(py.net_revenue * assumptions.nwc_change_pct_revenue)
+        py.free_cash_flow = py.ebitda + py.capex + py.nwc_change
+
+        adjusted.append(py)
+
+    return adjusted
+
+
 def build_entity_model(
     stmt: FinancialStatement,
     entity_name: str,
     assumption_overrides: dict | None = None,
     n_projection_years: int = 5,
+    force_reproject: bool = False,
+    adjustment_factors: dict | None = None,
     verbose: bool = False,
 ) -> FinancialModel:
     """Build a financial model for a single entity.
@@ -377,6 +443,11 @@ def build_entity_model(
         entity_name: Name of the entity
         assumption_overrides: Dict of assumption fields to override
         n_projection_years: Number of years to project
+        force_reproject: If True, regenerate projections from last historical year
+        adjustment_factors: Dict with scaling factors to apply to CIM projections.
+            Keys: revenue_factor, cogs_factor, sga_factor
+            E.g. {"revenue_factor": 0.85, "cogs_factor": 1.10, "sga_factor": 1.05}
+            This preserves the CIM's projection shape while scaling up/down.
         verbose: Print progress
     """
     model = FinancialModel(entity_name=entity_name)
@@ -404,8 +475,11 @@ def build_entity_model(
     model.historical = [y for y in all_years if not y.is_projected]
     existing_projected = [y for y in all_years if y.is_projected]
 
-    # Use existing projections from CIM if available, else generate our own
-    if existing_projected:
+    # Strategy: if adjustment_factors provided, scale CIM projections (preferred for scenarios)
+    if existing_projected and adjustment_factors:
+        model.projected = _adjust_projections(existing_projected, adjustment_factors, assumptions)
+    elif existing_projected and not force_reproject:
+        # Use CIM projections as-is (base case)
         model.projected = existing_projected
         # Add FCF estimates to existing projections
         for py in model.projected:
