@@ -49,6 +49,7 @@ def process(
     xlsx: bool = typer.Option(False, "--xlsx", help="Gerar planilha Excel (.xlsx)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
     pptx: bool = typer.Option(False, "--pptx", help="Gerar apresentação PowerPoint (.pptx)"),
+    valuation: bool = typer.Option(False, "--valuation", help="Executar modelo financeiro + cenários"),
 ):
     """Processa um CIM/PDF e gera o dossiê completo."""
     from .pipeline.orchestrator import run_pipeline
@@ -71,6 +72,8 @@ def process(
         _print(f"[bold]Excel:[/bold] Sim")
     if pptx:
         _print(f"[bold]PPT:[/bold] Sim")
+    if valuation:
+        _print(f"[bold]Valuation:[/bold] Sim")
     _print("")
 
     version = get_next_version_number(project_name)
@@ -115,6 +118,37 @@ def process(
     dossier_dict = json.loads(full_json)
     version_path = save_version(project_name, dossier_dict)
     files_saved.append(("Versão", version_path, version))
+
+    if valuation:
+        from .valuation.scenarios import build_scenarios
+        import json as json_lib
+        scenarios = build_scenarios(dossier, verbose=verbose)
+        val_path = f"data/outputs/valuation_{safe_name}.json"
+        with open(val_path, "w", encoding="utf-8") as f:
+            f.write(json_lib.dumps(scenarios.to_dict(), ensure_ascii=False, indent=2, default=str))
+        files_saved.append(("Valuation", val_path, "3 cenários"))
+
+        # Print comparison table
+        _print(f"\n  [bold]Valuation — Cenários[/bold]\n")
+        comp = scenarios.comparison_table()
+        if console and HAS_RICH:
+            from rich.table import Table as RichTable
+            vt = RichTable(title="Cenários de Valuation")
+            vt.add_column("Cenário", style="bold")
+            vt.add_column("Receita", justify="right")
+            vt.add_column("EBITDA", justify="right")
+            vt.add_column("Margem", justify="right")
+            vt.add_column("FCF", justify="right")
+            for row in comp:
+                mg = f"{row['ebitda_margin']*100:.1f}%" if row['ebitda_margin'] else "—"
+                vt.add_row(
+                    row["scenario"],
+                    f"{row['revenue']:,.0f}",
+                    f"{row['ebitda']:,.0f}",
+                    mg,
+                    f"{row['fcf']:,.0f}",
+                )
+            console.print(vt)
 
     _print_summary(dossier, files_saved)
 
