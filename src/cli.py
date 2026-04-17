@@ -101,23 +101,8 @@ def process(
             f.write(js)
         files_saved.append(("JSON", json_path, f"{len(js):,} chars"))
 
-    if xlsx:
-        from .exporters.xlsx_exporter import export_xlsx
-        xlsx_path = f"data/outputs/dossie_{safe_name}.xlsx"
-        export_xlsx(dossier, xlsx_path, verbose=verbose)
-        files_saved.append(("Excel", xlsx_path, "10 abas"))
-
-    if pptx:
-        from .exporters.pptx_exporter import export_pptx
-        pptx_path = f"data/outputs/dossie_{safe_name}.pptx"
-        export_pptx(dossier, pptx_path, verbose=verbose)
-        files_saved.append(("PPT", pptx_path, "13 slides"))
-
-    full_json = to_json(dossier)
-    dossier_dict = json.loads(full_json)
-    version_path = save_version(project_name, dossier_dict)
-    files_saved.append(("Versão", version_path, version))
-
+    # Run valuation BEFORE exporters so data is available to them
+    val_result = None
     if valuation:
         from .valuation.scenarios import run_full_valuation
         import json as json_lib
@@ -149,6 +134,23 @@ def process(
                     f"{s['moic']:.2f}x",
                 )
             console.print(vt)
+
+    if xlsx:
+        from .exporters.xlsx_exporter import export_xlsx
+        xlsx_path = f"data/outputs/dossie_{safe_name}.xlsx"
+        n_abas = export_xlsx(dossier, xlsx_path, valuation_data=val_result, verbose=verbose)
+        files_saved.append(("Excel", xlsx_path, f"{n_abas} abas"))
+
+    if pptx:
+        from .exporters.pptx_exporter import export_pptx
+        pptx_path = f"data/outputs/dossie_{safe_name}.pptx"
+        n_slides = export_pptx(dossier, pptx_path, valuation_data=val_result, verbose=verbose)
+        files_saved.append(("PPT", pptx_path, f"{n_slides} slides"))
+
+    full_json = to_json(dossier)
+    dossier_dict = json.loads(full_json)
+    version_path = save_version(project_name, dossier_dict)
+    files_saved.append(("Versão", version_path, version))
 
     _print_summary(dossier, files_saved)
 

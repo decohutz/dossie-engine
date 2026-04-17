@@ -751,18 +751,190 @@ def _slide_gaps(prs, dossier: Dossier):
 
 
 # ═══════════════════════════════════════════════════════════════
+# VALUATION SLIDES
+# ═══════════════════════════════════════════════════════════════
+def _slide_valuation_table(prs, dossier: Dossier, valuation_data: dict):
+    """Slide 14: Valuation comparison table with KPI cards."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = LIGHT_BG
+
+    _header(slide, "Valuation — Cenários")
+
+    summaries = valuation_data.get("summaries", [])
+    inputs = valuation_data.get("inputs", {})
+
+    if not summaries:
+        _text(slide, "Dados de valuation não disponíveis", 0.8, 2, 8, 0.5, size=14, color=MUTED)
+        _footer(slide, dossier.metadata.project_name, 14)
+        return
+
+    # KPI cards: WACC, Stake, IRR (base), MOIC (base)
+    wacc = inputs.get("wacc", {})
+    base = next((s for s in summaries if s.get("scenario_name", "").lower() == "base"), summaries[0])
+
+    cards = [
+        (f"{wacc.get('wacc', 0)*100:.1f}%", "WACC", NAVY),
+        (f"{inputs.get('stake_pct', 0)*100:.0f}%", "Stake investidor", ACCENT),
+        (f"{base.get('irr', 0)*100:.1f}%", "IRR (caso base)", ACCENT_GREEN),
+        (f"{base.get('moic', 0):.2f}x", "MOIC (caso base)", ACCENT_AMBER),
+    ]
+
+    card_w = 2.8
+    gap = 0.3
+    start_x = 0.8
+    for i, (val, label, accent) in enumerate(cards):
+        x = start_x + i * (card_w + gap)
+        _card(slide, val, label, x, 1.2, w=card_w, h=1.5, accent=accent)
+
+    # Comparison table
+    headers = ["Cenário", "DCF Perp", "DCF Exit", "EV/EBITDA", "EV/Rev", "IRR", "MOIC"]
+    rows = []
+    base_row = -1
+    for i, s in enumerate(summaries):
+        name = s.get("scenario_name", f"Cenário {i+1}")
+        if name.lower() == "base":
+            base_row = i
+        rows.append([
+            name,
+            f"{s.get('dcf_perpetuity', 0):,.0f}",
+            f"{s.get('dcf_exit_multiple', 0):,.0f}",
+            f"{s.get('multiples_ev_ebitda', 0):,.0f}",
+            f"{s.get('multiples_ev_revenue', 0):,.0f}",
+            f"{s.get('irr', 0)*100:.1f}%",
+            f"{s.get('moic', 0):.2f}x",
+        ])
+
+    _add_table(slide, headers, rows, 0.8, 3.1, 11.7, row_h=0.4, highlight_row=base_row)
+
+    # Unit note
+    _text(slide, "EV em BRL k  |  Entry: DCF equity  |  Exit: múltiplo × EBITDA terminal",
+          0.8, 5.0, 8, 0.25, size=9, color=MUTED)
+
+    # WACC breakdown on right
+    _shape(slide, MSO_SHAPE.RECTANGLE, 9.5, 5.3, 3.0, 1.5,
+           fill=WHITE, line_color=BORDER_LIGHT, line_width=0.5)
+    _text(slide, "WACC", 9.7, 5.35, 2, 0.25, size=11, color=NAVY, bold=True)
+    wacc_lines = [
+        f"Ke: {wacc.get('cost_of_equity', 0)*100:.1f}%",
+        f"Kd pós-tax: {wacc.get('cost_of_debt_aftertax', 0)*100:.1f}%",
+        f"E/V: {wacc.get('equity_to_total', 0)*100:.0f}% | D/V: {wacc.get('debt_to_total', 0)*100:.0f}%",
+    ]
+    for j, line in enumerate(wacc_lines):
+        _text(slide, line, 9.7, 5.65 + j * 0.3, 2.6, 0.25, size=9, color=DARK_TEXT)
+
+    _footer(slide, dossier.metadata.project_name, 14)
+
+
+def _slide_valuation_chart(prs, dossier: Dossier, valuation_data: dict):
+    """Slide 15: EV range chart (horizontal bars per scenario)."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = LIGHT_BG
+
+    _header(slide, "Valuation — Faixa de EV")
+
+    summaries = valuation_data.get("summaries", [])
+    if not summaries:
+        _text(slide, "Dados de valuation não disponíveis", 0.8, 2, 8, 0.5, size=14, color=MUTED)
+        _footer(slide, dossier.metadata.project_name, 15)
+        return
+
+    # Build horizontal bar chart showing EV range per scenario
+    fig, ax = plt.subplots(figsize=(8, 4))
+    fig.patch.set_facecolor("#F5F7FA")
+    ax.set_facecolor("#F5F7FA")
+
+    names = [s.get("scenario_name", "?") for s in summaries]
+    lows = [s.get("equity_range_low", 0) / 1000 for s in summaries]  # Convert to MM
+    highs = [s.get("equity_range_high", 0) / 1000 for s in summaries]
+    dcf_perps = [s.get("dcf_perpetuity", 0) / 1000 for s in summaries]
+    dcf_exits = [s.get("dcf_exit_multiple", 0) / 1000 for s in summaries]
+
+    y_pos = range(len(names))
+    colors_bar = ["#EF4444", "#1E2761", "#10B981"]  # red, navy, green
+    colors_bar = colors_bar[:len(names)]
+
+    # Draw range bars
+    for i, (name, lo, hi) in enumerate(zip(names, lows, highs)):
+        # Range bar (low to high)
+        ax.barh(i, hi - lo, left=lo, height=0.5, color=colors_bar[i], alpha=0.3, zorder=2)
+        # DCF perpetuity marker
+        ax.plot(dcf_perps[i], i, 'D', color=colors_bar[i], markersize=10, zorder=4)
+        # DCF exit marker
+        ax.plot(dcf_exits[i], i, 's', color=colors_bar[i], markersize=9, zorder=4, alpha=0.7)
+        # Labels
+        ax.text(lo - max(highs) * 0.02, i, f"{lo:.0f}",
+                ha="right", va="center", fontsize=8, color=colors_bar[i], fontweight="bold")
+        ax.text(hi + max(highs) * 0.02, i, f"{hi:.0f}",
+                ha="left", va="center", fontsize=8, color=colors_bar[i], fontweight="bold")
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(names, fontsize=11, color="#1E2761", fontweight="bold")
+    ax.set_xlabel("Enterprise Value (BRL MM)", fontsize=10, color="#64748B")
+    ax.invert_yaxis()
+
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='D', color='w', markerfacecolor='#64748B', markersize=8, label='DCF Perpetuidade'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='#64748B', markersize=8, label='DCF Exit Multiple'),
+    ]
+    ax.legend(handles=legend_elements, loc='lower right', fontsize=8, frameon=False)
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#E2E8F0")
+    ax.spines["bottom"].set_color("#E2E8F0")
+    ax.tick_params(colors="#64748B", labelsize=8)
+    ax.xaxis.grid(True, color="#E2E8F0", linewidth=0.5, zorder=0)
+    ax.set_axisbelow(True)
+    plt.tight_layout()
+
+    img = _chart_to_image(fig)
+    slide.shapes.add_picture(img, Inches(0.5), Inches(1.1), Inches(8.5), Inches(4.5))
+
+    # Right side: "What needs to be true" for base case
+    scenarios_data = valuation_data.get("scenarios", {})
+    base_sc = scenarios_data.get("base", {})
+    wnbt = base_sc.get("what_needs_to_be_true", [])
+
+    if wnbt:
+        _shape(slide, MSO_SHAPE.RECTANGLE, 9.3, 1.1, 3.5, 4.5,
+               fill=WHITE, line_color=BORDER_LIGHT, line_width=0.5)
+        _shape(slide, MSO_SHAPE.RECTANGLE, 9.3, 1.1, 0.06, 4.5, fill=ACCENT)
+        _text(slide, "What needs to be true", 9.6, 1.2, 3.0, 0.3, size=12, color=NAVY, bold=True)
+        _text(slide, "(caso base)", 9.6, 1.45, 3.0, 0.2, size=9, color=MUTED)
+
+        for j, item in enumerate(wnbt[:6]):
+            y = 1.8 + j * 0.6
+            cat = item.get("category", "")
+            cond = item.get("condition", "")
+            _text(slide, cat, 9.6, y, 3.0, 0.2, size=9, color=ACCENT, bold=True)
+            _text(slide, cond[:55], 9.6, y + 0.2, 3.0, 0.3, size=9, color=DARK_TEXT)
+
+    # Terminal metrics
+    _text(slide, "Faixa: DCF Perpetuidade (◆) a Múltiplos (barra) | BRL MM",
+          0.8, 5.8, 8, 0.25, size=9, color=MUTED)
+
+    _footer(slide, dossier.metadata.project_name, 15)
+
+
+# ═══════════════════════════════════════════════════════════════
 # MAIN EXPORT FUNCTION
 # ═══════════════════════════════════════════════════════════════
-def export_pptx(dossier: Dossier, output_path: str, verbose: bool = False) -> str:
+def export_pptx(dossier: Dossier, output_path: str, valuation_data: dict | None = None,
+                verbose: bool = False) -> int:
     """Export dossier to a formatted PowerPoint presentation.
 
     Args:
         dossier: The dossier to export
         output_path: Path for the output .pptx file
+        valuation_data: Optional valuation results from run_full_valuation
         verbose: Print progress
 
     Returns:
-        The output file path
+        Number of slides created
     """
     if verbose:
         print("  [PPT] Gerando apresentação...")
@@ -784,13 +956,20 @@ def export_pptx(dossier: Dossier, output_path: str, verbose: bool = False) -> st
     _slide_market(prs, dossier)
     _slide_competitors(prs, dossier)
     _slide_transaction(prs, dossier)
-    _slide_gaps(prs, dossier)
+
+    # Valuation slides (14-15) — only if data available
+    if valuation_data and valuation_data.get("summaries"):
+        _slide_valuation_table(prs, dossier, valuation_data)
+        _slide_valuation_chart(prs, dossier, valuation_data)
+
+    _slide_gaps(prs, dossier)  # Always last
 
     # Save
+    n_slides = len(prs.slides)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     prs.save(output_path)
 
     if verbose:
-        print(f"  [PPT] ✅ Salvo em: {output_path} ({len(prs.slides)} slides)")
+        print(f"  [PPT] ✅ Salvo em: {output_path} ({n_slides} slides)")
 
-    return output_path
+    return n_slides
