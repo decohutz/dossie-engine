@@ -403,12 +403,37 @@ def run_full_valuation(
     stake_range = dossier.transaction.target_stake_range.value
     if stake_range and isinstance(stake_range, str):
         import re
-        nums = re.findall(r'(\d+)', str(stake_range))
-        if nums:
-            # Use the first percentage found, capped at 60%
-            parsed = min(int(nums[0]), 60) / 100
-            if 0.05 <= parsed <= 0.60:
-                stake_pct = parsed
+        s = str(stake_range)
+
+        # The CIM typically says ">60% acionistas, <40% investidor"
+        # The investor stake is the one with "<" or "menor" or "minoritário"
+        # Strategy: look for <N% first (investor cap), then bare numbers
+
+        # Pattern 1: explicit "<X%" — this is the investor's max stake
+        lt_match = re.search(r'<\s*(\d+)\s*%', s)
+        if lt_match:
+            parsed = int(lt_match.group(1)) / 100
+        else:
+            # Pattern 2: "até X%" or "up to X%"
+            ate_match = re.search(r'(?:até|up\s+to)\s+(\d+)\s*%', s, re.IGNORECASE)
+            if ate_match:
+                parsed = int(ate_match.group(1)) / 100
+            else:
+                # Pattern 3: take the smallest number (likely investor stake)
+                nums = re.findall(r'(\d+)\s*%', s)
+                if nums:
+                    parsed = min(int(n) for n in nums) / 100
+                else:
+                    parsed = stake_pct  # fallback to default
+
+        # Sanity check: investor stake should be 5%-50%
+        if 0.05 <= parsed <= 0.50:
+            stake_pct = parsed
+        elif parsed > 0.50:
+            # Likely picked up the majority holder's stake; use complement
+            complement = 1.0 - parsed
+            if 0.05 <= complement <= 0.50:
+                stake_pct = complement
 
     # Step 1: Build scenarios
     engine = build_scenarios(dossier, verbose=verbose)
@@ -443,14 +468,22 @@ def run_full_valuation(
             exit_multiple=ev_ebitda_multiple, net_debt=net_debt, verbose=False,
         )
 
-        # Multiples
+        # Multiples (terminal year — for EV range)
         mult = run_multiples(
             proj, ev_ebitda_multiple, ev_revenue_multiple,
             net_debt=net_debt, verbose=verbose,
         )
 
-        # IRR (use blended equity as entry price)
-        entry_eq = mult.equity_blended if mult.equity_blended > 0 else dcf_perp.bridge.equity_value
+        # IRR: entry at DCF equity value (reflects all future cash flows
+        # including growth optionality like Lojas Próprias ramp-up),
+        # exit at terminal EBITDA × multiple
+        entry_eq = dcf_perp.bridge.equity_value
+        if entry_eq <= 0:
+            entry_eq = mult.equity_blended
+
+        if verbose:
+            print(f"      Entry (DCF equity): {entry_eq:,.0f}")
+
         irr = run_irr(
             proj, entry_equity_value=entry_eq,
             stake_pct=stake_pct, exit_ev_ebitda=ev_ebitda_multiple,
