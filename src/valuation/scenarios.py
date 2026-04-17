@@ -356,3 +356,140 @@ def build_scenarios(
                   f"{mg:>10} {sc.terminal_fcf:>12,.0f}")
 
     return engine
+
+
+# ═══════════════════════════════════════════════════════════════
+# FULL VALUATION ORCHESTRATOR
+# ═══════════════════════════════════════════════════════════════
+def run_full_valuation(
+    dossier,
+    wacc_inputs=None,
+    ev_ebitda_multiple: float | None = None,
+    ev_revenue_multiple: float | None = None,
+    stake_pct: float = 0.30,
+    net_debt: float = 0,
+    verbose: bool = False,
+) -> dict:
+    """Run complete valuation: scenarios + DCF + multiples + IRR.
+
+    Args:
+        dossier: The dossier with financial and market data
+        wacc_inputs: WACC parameters (auto-derived if None)
+        ev_ebitda_multiple: EV/EBITDA multiple (uses extracted if None)
+        ev_revenue_multiple: EV/Revenue multiple (uses extracted if None)
+        stake_pct: Target investor stake
+        net_debt: Net debt for equity bridge
+        verbose: Print progress
+    """
+    from .dcf import run_dcf, WACCInputs
+    from .multiples import run_multiples, run_irr, build_valuation_summary
+
+    # Extract multiples from dossier if not provided
+    if ev_ebitda_multiple is None or ev_revenue_multiple is None:
+        mult_data = dossier.market.global_multiples_median.value
+        if isinstance(mult_data, dict):
+            if ev_ebitda_multiple is None:
+                ev_ebitda_multiple = mult_data.get("ev_ebitda_median", 11.0)
+            if ev_revenue_multiple is None:
+                ev_revenue_multiple = mult_data.get("ev_revenue_median", 1.8)
+        else:
+            ev_ebitda_multiple = ev_ebitda_multiple or 11.0
+            ev_revenue_multiple = ev_revenue_multiple or 1.8
+
+    if not wacc_inputs:
+        wacc_inputs = WACCInputs()
+
+    # Extract stake from dossier
+    stake_range = dossier.transaction.target_stake_range.value
+    if stake_range and isinstance(stake_range, str):
+        import re
+        nums = re.findall(r'(\d+)', str(stake_range))
+        if nums:
+            # Use the first percentage found, capped at 60%
+            parsed = min(int(nums[0]), 60) / 100
+            if 0.05 <= parsed <= 0.60:
+                stake_pct = parsed
+
+    # Step 1: Build scenarios
+    engine = build_scenarios(dossier, verbose=verbose)
+
+    # Step 2: Run DCF + Multiples + IRR for each scenario
+    if verbose:
+        print(f"\n  [Valuation] Running DCF + Múltiplos + IRR...")
+        print(f"    WACC: {wacc_inputs.wacc*100:.1f}%  |  "
+              f"EV/EBITDA: {ev_ebitda_multiple}x  |  "
+              f"EV/Revenue: {ev_revenue_multiple}x  |  "
+              f"Stake: {stake_pct*100:.0f}%")
+
+    summaries = []
+
+    for scenario in [engine.pessimistic, engine.base, engine.optimistic]:
+        if verbose:
+            print(f"\n    --- {scenario.name} ---")
+
+        proj = [y for y in scenario.consolidated if y.is_projected]
+        if not proj:
+            proj = scenario.consolidated
+
+        # DCF - Perpetuity
+        dcf_perp = run_dcf(
+            proj, wacc_inputs, terminal_method="perpetuity",
+            terminal_growth_rate=0.03, net_debt=net_debt, verbose=verbose,
+        )
+
+        # DCF - Exit Multiple
+        dcf_exit = run_dcf(
+            proj, wacc_inputs, terminal_method="exit_multiple",
+            exit_multiple=ev_ebitda_multiple, net_debt=net_debt, verbose=False,
+        )
+
+        # Multiples
+        mult = run_multiples(
+            proj, ev_ebitda_multiple, ev_revenue_multiple,
+            net_debt=net_debt, verbose=verbose,
+        )
+
+        # IRR (use blended equity as entry price)
+        entry_eq = mult.equity_blended if mult.equity_blended > 0 else dcf_perp.bridge.equity_value
+        irr = run_irr(
+            proj, entry_equity_value=entry_eq,
+            stake_pct=stake_pct, exit_ev_ebitda=ev_ebitda_multiple,
+            net_debt_at_exit=net_debt, verbose=verbose,
+        )
+
+        summary = build_valuation_summary(
+            scenario.name,
+            dcf_perp_ev=dcf_perp.enterprise_value,
+            dcf_exit_ev=dcf_exit.enterprise_value,
+            mult_ebitda_ev=mult.ev_by_ebitda,
+            mult_rev_ev=mult.ev_by_revenue,
+            net_debt=net_debt,
+            irr=irr.irr,
+            moic=irr.moic,
+        )
+        summaries.append(summary)
+
+    # Print summary table
+    if verbose:
+        print(f"\n  {'='*80}")
+        print(f"  {'Cenário':<12} {'DCF Perp':>10} {'DCF Exit':>10} "
+              f"{'EV/EBITDA':>10} {'EV/Rev':>10} {'Eq Low':>10} {'Eq High':>10} "
+              f"{'IRR':>7} {'MOIC':>6}")
+        print(f"  {'-'*80}")
+        for s in summaries:
+            print(f"  {s.scenario_name:<12} {s.dcf_perpetuity:>10,.0f} {s.dcf_exit_multiple:>10,.0f} "
+                  f"{s.multiples_ev_ebitda:>10,.0f} {s.multiples_ev_revenue:>10,.0f} "
+                  f"{s.equity_range_low:>10,.0f} {s.equity_range_high:>10,.0f} "
+                  f"{s.irr*100:>6.1f}% {s.moic:>5.2f}x")
+
+    return {
+        "scenarios": engine.to_dict(),
+        "summaries": [s.to_dict() for s in summaries],
+        "inputs": {
+            "wacc": wacc_inputs.to_dict(),
+            "ev_ebitda_multiple": ev_ebitda_multiple,
+            "ev_revenue_multiple": ev_revenue_multiple,
+            "stake_pct": stake_pct,
+            "net_debt": net_debt,
+        },
+    }

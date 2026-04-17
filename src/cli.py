@@ -4,7 +4,6 @@ Dossier Engine CLI.
 Usage:
     dossie process data/inputs/Projeto_Frank_CIM.pdf --project "Projeto Frank"
     dossie show --project "Projeto Frank"
-    dossie show --project "Projeto Frank" --format json
     dossie gaps --project "Projeto Frank"
     dossie versions --project "Projeto Frank"
 """
@@ -47,9 +46,9 @@ def process(
     no_llm: bool = typer.Option(False, "--no-llm", help="Desabilitar LLM e usar extração por regras"),
     enrich: bool = typer.Option(False, "--enrich", "-e", help="Enriquecer com dados da web (busca pública)"),
     xlsx: bool = typer.Option(False, "--xlsx", help="Gerar planilha Excel (.xlsx)"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
     pptx: bool = typer.Option(False, "--pptx", help="Gerar apresentação PowerPoint (.pptx)"),
-    valuation: bool = typer.Option(False, "--valuation", help="Executar modelo financeiro + cenários"),
+    valuation: bool = typer.Option(False, "--valuation", help="Executar modelo financeiro + cenários + DCF"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
 ):
     """Processa um CIM/PDF e gera o dossiê completo."""
     from .pipeline.orchestrator import run_pipeline
@@ -120,33 +119,34 @@ def process(
     files_saved.append(("Versão", version_path, version))
 
     if valuation:
-        from .valuation.scenarios import build_scenarios
+        from .valuation.scenarios import run_full_valuation
         import json as json_lib
-        scenarios = build_scenarios(dossier, verbose=verbose)
+        val_result = run_full_valuation(dossier, verbose=verbose)
         val_path = f"data/outputs/valuation_{safe_name}.json"
         with open(val_path, "w", encoding="utf-8") as f:
-            f.write(json_lib.dumps(scenarios.to_dict(), ensure_ascii=False, indent=2, default=str))
-        files_saved.append(("Valuation", val_path, "3 cenários"))
+            f.write(json_lib.dumps(val_result, ensure_ascii=False, indent=2, default=str))
+        files_saved.append(("Valuation", val_path, "3 cenários × 4 métodos"))
 
-        # Print comparison table
-        _print(f"\n  [bold]Valuation — Cenários[/bold]\n")
-        comp = scenarios.comparison_table()
+        _print(f"\n  [bold]Valuation — Resumo[/bold]\n")
         if console and HAS_RICH:
             from rich.table import Table as RichTable
-            vt = RichTable(title="Cenários de Valuation")
+            vt = RichTable(title="Valuation (EV em BRL k)")
             vt.add_column("Cenário", style="bold")
-            vt.add_column("Receita", justify="right")
-            vt.add_column("EBITDA", justify="right")
-            vt.add_column("Margem", justify="right")
-            vt.add_column("FCF", justify="right")
-            for row in comp:
-                mg = f"{row['ebitda_margin']*100:.1f}%" if row['ebitda_margin'] else "—"
+            vt.add_column("DCF Perp", justify="right")
+            vt.add_column("DCF Exit", justify="right")
+            vt.add_column("EV/EBITDA", justify="right")
+            vt.add_column("EV/Rev", justify="right")
+            vt.add_column("IRR", justify="right")
+            vt.add_column("MOIC", justify="right")
+            for s in val_result.get("summaries", []):
                 vt.add_row(
-                    row["scenario"],
-                    f"{row['revenue']:,.0f}",
-                    f"{row['ebitda']:,.0f}",
-                    mg,
-                    f"{row['fcf']:,.0f}",
+                    s["scenario_name"],
+                    f"{s['dcf_perpetuity']:,.0f}",
+                    f"{s['dcf_exit_multiple']:,.0f}",
+                    f"{s['multiples_ev_ebitda']:,.0f}",
+                    f"{s['multiples_ev_revenue']:,.0f}",
+                    f"{s['irr']*100:.1f}%",
+                    f"{s['moic']:.2f}x",
                 )
             console.print(vt)
 
