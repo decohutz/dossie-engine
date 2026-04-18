@@ -100,7 +100,7 @@ def run_pipeline(
     if use_llm:
         if verbose:
             print("Step 4: Extracting with LLM (Ollama)...")
-        company, market, transaction = _extract_with_llm(classified, source_file, verbose)
+        company, market, transaction = _extract_with_llm(classified, source_file, verbose, pdf_path=pdf_path)
     else:
         if verbose:
             print("Step 4: Extracting with rules (fallback)...")
@@ -137,6 +137,7 @@ def run_pipeline(
 
 def _extract_with_llm(
     classified: list[ClassifiedPage], source_file: str, verbose: bool = False,
+    pdf_path: str = "",
 ) -> tuple[CompanyChapter, MarketChapter, TransactionChapter]:
     """Extract using LLM (Ollama)."""
     from ..llm.client import OllamaClient
@@ -153,9 +154,9 @@ def _extract_with_llm(
     if verbose:
         print(f"  Conectado ao Ollama: {client.model}")
 
-    company = extract_company_llm(client, classified, source_file, verbose)
-    market = extract_market_llm(client, classified, source_file, verbose)
-    transaction = extract_transaction_llm(client, classified, source_file, verbose)
+    company = extract_company_llm(client, classified, source_file, verbose, pdf_path=pdf_path)
+    market = extract_market_llm(client, classified, source_file, verbose, pdf_path=pdf_path)
+    transaction = extract_transaction_llm(client, classified, source_file, verbose) 
 
     return company, market, transaction
 
