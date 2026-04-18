@@ -142,19 +142,31 @@ TEXTO:
 def prompt_competitors(text: str) -> tuple[str, str]:
     return SYSTEM_EXTRACTION, f"""Extraia os concorrentes/competidores mencionados no texto abaixo.
 
-ATENÇÃO: alguns nomes de empresas podem ser logos/imagens e não aparecer como texto.
-Se houver uma tabela com números (lojas, faturamento) mas sem nomes, extraia os números
-e coloque "Empresa não identificada (posição N)" como nome.
+REGRAS IMPORTANTES:
+1. Concorrentes são REDES VAREJISTAS que competem diretamente com a empresa-alvo. 
+   Exemplos no setor óptico: Óticas Carol, Chilli Beans, Óticas Diniz, Mercadão dos Óculos.
+2. NÃO inclua fabricantes/fornecedores (HOYA, Carl Zeiss, etc.) como concorrentes a menos 
+   que eles também operem redes de lojas no Brasil.
+3. EssilorLuxottica pode ser listada SE operar lojas (Óticas Carol é do grupo EssilorLuxottica).
+   Nesse caso, use o nome da rede varejista, não do grupo industrial.
+4. Se houver TEXTO DE LOGOS/IMAGENS (seção "TEXTO ADICIONAL EXTRAÍDO"), use esses nomes 
+   como nomes das empresas. Logos em imagens são os nomes reais dos concorrentes.
+5. Se houver uma tabela com números (lojas, faturamento) mas sem nomes legíveis, e houver 
+   texto de OCR disponível, associe os nomes do OCR com os números pela posição (esquerda 
+   para direita).
+6. O campo "investor" é o INVESTIDOR/FUNDO que investiu naquela rede, NÃO a própria rede.
+7. Se houver logos identificados como "LOGO_1: nome", "LOGO_2: nome", etc., use esses 
+   nomes na ordem correspondente aos dados numéricos.
 
 Retorne JSON no formato:
 {{
   "competitors": [
     {{
-      "name": "nome da empresa",
+      "name": "nome da REDE VAREJISTA (não do fabricante)",
       "stores": 1408,
       "revenue": 887,
       "revenue_unit": "BRL MM",
-      "investor": "nome do investidor ou null",
+      "investor": "nome do investidor/fundo ou null",
       "market_share_pct": null
     }}
   ]
