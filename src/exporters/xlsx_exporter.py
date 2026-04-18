@@ -415,16 +415,187 @@ def _write_gaps_sheet(ws, dossier: Dossier):
     ws.column_dimensions["D"].width = 45
 
 
-def export_xlsx(dossier: Dossier, output_path: str, verbose: bool = False) -> str:
+def _write_valuation_sheet(ws, valuation_data: dict):
+    """Write valuation summary sheet with scenarios, DCF, multiples, IRR/MOIC."""
+    ws.cell(row=1, column=1, value="Valuation — Cenários").font = TITLE_FONT
+    ws.merge_cells("A1:H1")
+
+    summaries = valuation_data.get("summaries", [])
+    inputs = valuation_data.get("inputs", {})
+
+    if not summaries:
+        ws.cell(row=3, column=1, value="Sem dados de valuation").font = DATA_FONT
+        return
+
+    # ── Section 1: Scenario comparison table ──────────────────────────
+    row = 3
+    ws.cell(row=row, column=1, value="COMPARATIVO DE CENÁRIOS (EV em BRL k)").font = LABEL_FONT
+    row += 1
+    headers = ["Cenário", "DCF Perpetuidade", "DCF Exit Multiple", "EV/EBITDA", "EV/Revenue",
+               "Equity Low", "Equity High", "IRR", "MOIC"]
+    _write_header_row(ws, row, headers)
+    row += 1
+
+    # Highlight base row
+    base_idx = -1
+    for i, s in enumerate(summaries):
+        if s.get("scenario_name", "").lower() == "base":
+            base_idx = i
+
+    for i, s in enumerate(summaries):
+        name = s.get("scenario_name", f"Cenário {i+1}")
+        vals = [
+            name,
+            s.get("dcf_perpetuity", 0),
+            s.get("dcf_exit_multiple", 0),
+            s.get("multiples_ev_ebitda", 0),
+            s.get("multiples_ev_revenue", 0),
+            s.get("equity_range_low", 0),
+            s.get("equity_range_high", 0),
+            s.get("irr", 0),
+            s.get("moic", 0),
+        ]
+
+        for j, val in enumerate(vals):
+            cell = ws.cell(row=row, column=j + 1, value=val)
+            cell.border = THIN_BORDER
+
+            if j == 0:
+                cell.font = TOTAL_FONT if i == base_idx else DATA_FONT
+                if i == base_idx:
+                    cell.fill = TOTAL_FILL
+            elif j in (7,):  # IRR
+                cell.number_format = '0.0%'
+                cell.font = TOTAL_FONT if i == base_idx else DATA_FONT
+                cell.alignment = Alignment(horizontal="right")
+                if i == base_idx:
+                    cell.fill = TOTAL_FILL
+            elif j in (8,):  # MOIC
+                cell.number_format = '0.00"x"'
+                cell.font = TOTAL_FONT if i == base_idx else DATA_FONT
+                cell.alignment = Alignment(horizontal="right")
+                if i == base_idx:
+                    cell.fill = TOTAL_FILL
+            else:
+                cell.number_format = '#,##0'
+                cell.font = TOTAL_FONT if i == base_idx else DATA_FONT
+                cell.alignment = Alignment(horizontal="right")
+                if i == base_idx:
+                    cell.fill = TOTAL_FILL
+        row += 1
+
+    # ── Section 2: WACC breakdown ──────────────────────────
+    row += 2
+    ws.cell(row=row, column=1, value="PREMISSAS WACC").font = LABEL_FONT
+    row += 1
+
+    wacc = inputs.get("wacc", {})
+    wacc_fields = [
+        ("Taxa livre de risco (Rf)", wacc.get("risk_free_rate"), True),
+        ("Prêmio de risco de mercado (ERP)", wacc.get("equity_risk_premium"), True),
+        ("Beta", wacc.get("beta"), False),
+        ("Prêmio de tamanho", wacc.get("size_premium"), True),
+        ("Risco país", wacc.get("country_risk"), True),
+        ("Custo do equity (Ke)", wacc.get("cost_of_equity"), True),
+        ("Custo da dívida pré-tax", wacc.get("cost_of_debt_pretax"), True),
+        ("Taxa de imposto", wacc.get("tax_rate"), True),
+        ("Custo da dívida pós-tax", wacc.get("cost_of_debt_aftertax"), True),
+        ("Peso equity", wacc.get("equity_to_total"), True),
+        ("Peso dívida", wacc.get("debt_to_total"), True),
+        ("WACC", wacc.get("wacc"), True),
+    ]
+
+    for label, val, is_pct in wacc_fields:
+        ws.cell(row=row, column=1, value=label).font = DATA_FONT
+        cell = ws.cell(row=row, column=2, value=val)
+        cell.font = TOTAL_FONT if label == "WACC" else DATA_FONT
+        if is_pct and val is not None:
+            cell.number_format = '0.0%'
+        elif val is not None:
+            cell.number_format = '0.00'
+        if label == "WACC":
+            cell.fill = TOTAL_FILL
+            ws.cell(row=row, column=1).fill = TOTAL_FILL
+            ws.cell(row=row, column=1).font = TOTAL_FONT
+        ws.cell(row=row, column=1).border = THIN_BORDER
+        cell.border = THIN_BORDER
+        row += 1
+
+    # ── Section 3: Deal inputs ──────────────────────────
+    row += 1
+    ws.cell(row=row, column=1, value="PARÂMETROS DO DEAL").font = LABEL_FONT
+    row += 1
+
+    deal_fields = [
+        ("EV/EBITDA múltiplo", inputs.get("ev_ebitda_multiple"), '0.0"x"'),
+        ("EV/Revenue múltiplo", inputs.get("ev_revenue_multiple"), '0.0"x"'),
+        ("Stake investidor", inputs.get("stake_pct"), '0.0%'),
+        ("Dívida líquida", inputs.get("net_debt"), '#,##0'),
+    ]
+
+    for label, val, fmt in deal_fields:
+        ws.cell(row=row, column=1, value=label).font = DATA_FONT
+        ws.cell(row=row, column=1).border = THIN_BORDER
+        cell = ws.cell(row=row, column=2, value=val)
+        cell.font = DATA_FONT
+        cell.number_format = fmt
+        cell.border = THIN_BORDER
+        row += 1
+
+    # ── Section 4: Scenario details (terminal metrics) ──────────────────
+    scenarios_data = valuation_data.get("scenarios", {})
+    row += 1
+    ws.cell(row=row, column=1, value="MÉTRICAS TERMINAIS POR CENÁRIO (BRL k)").font = LABEL_FONT
+    row += 1
+    _write_header_row(ws, row, ["Cenário", "Receita Terminal", "EBITDA Terminal",
+                                "Margem EBITDA", "FCF Terminal", "CAGR Receita"])
+    row += 1
+
+    for key in ["pessimistic", "base", "optimistic"]:
+        sc = scenarios_data.get(key, {})
+        if not sc:
+            continue
+        is_base = key == "base"
+        vals = [
+            sc.get("name", key.title()),
+            sc.get("terminal_revenue", 0),
+            sc.get("terminal_ebitda", 0),
+            sc.get("terminal_ebitda_margin", 0),
+            sc.get("terminal_fcf", 0),
+            sc.get("revenue_cagr", 0),
+        ]
+        for j, val in enumerate(vals):
+            cell = ws.cell(row=row, column=j + 1, value=val)
+            cell.border = THIN_BORDER
+            if j == 0:
+                cell.font = TOTAL_FONT if is_base else DATA_FONT
+            elif j in (3, 5):  # margin, CAGR
+                cell.number_format = '0.0%'
+                cell.font = TOTAL_FONT if is_base else DATA_FONT
+            else:
+                cell.number_format = '#,##0'
+                cell.font = TOTAL_FONT if is_base else DATA_FONT
+            cell.alignment = Alignment(horizontal="right") if j > 0 else Alignment()
+            if is_base:
+                cell.fill = TOTAL_FILL
+        row += 1
+
+    _auto_width(ws, min_width=14, max_width=22)
+    ws.column_dimensions["A"].width = 30
+
+
+def export_xlsx(dossier: Dossier, output_path: str, valuation_data: dict | None = None,
+                verbose: bool = False) -> int:
     """Export dossier to a formatted Excel file.
 
     Args:
         dossier: The dossier to export
         output_path: Path for the output .xlsx file
+        valuation_data: Optional valuation results from run_full_valuation
         verbose: Print progress
 
     Returns:
-        The output file path
+        Number of sheets created
     """
     if verbose:
         print("  [Excel] Gerando planilha...")
@@ -469,11 +640,17 @@ def export_xlsx(dossier: Dossier, output_path: str, verbose: bool = False) -> st
     ws_gaps = wb.create_sheet(title="Gaps")
     _write_gaps_sheet(ws_gaps, dossier)
 
+    # Sheet 11: Valuation (if data available)
+    if valuation_data and valuation_data.get("summaries"):
+        ws_val = wb.create_sheet(title="Valuation")
+        _write_valuation_sheet(ws_val, valuation_data)
+
     # Save
+    n_sheets = len(wb.sheetnames)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     wb.save(output_path)
 
     if verbose:
-        print(f"  [Excel] ✅ Salvo em: {output_path}")
+        print(f"  [Excel] ✅ Salvo em: {output_path} ({n_sheets} abas)")
 
-    return output_path
+    return n_sheets

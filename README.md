@@ -267,9 +267,9 @@ O conteúdo do CIM (financeiros, termos, cap table) **nunca** sai da sua máquin
 | Marco 1 | CLI com versionamento (process, show, gaps, versions, diff) | ✅ Concluído |
 | Marco 2 | LLM local na extração (Ollama + Qwen 2.5 14B) | ✅ Concluído |
 | Marco 3 | Enriquecimento web (Reclame Aqui, Jusbrasil, Google) | ✅ Concluído |
-| Marco 4a | Exportação Excel (10 abas formatadas) | ✅ Concluído (Parcialmente) |
-| Marco 4b | Exportação PPT (apresentação executiva) | ✅ Concluído (Parcialmente) |
-| Marco 5 | Valuation e cenários (DCF, múltiplos, IRR, cenários) | Planejado |
+| Marco 4a | Exportação Excel (10 abas formatadas) | ✅ Concluído (90%) |
+| Marco 4b | Exportação PPT (apresentação executiva) | ✅ Concluído (90%) |
+| Marco 5 | Valuation e cenários (DCF, múltiplos, IRR, cenários) | ✅ Concluído |
 | v1.0 | Sistema completo com interface desktop | Futuro |
 
 ## Dependências

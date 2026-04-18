@@ -201,7 +201,10 @@ def _slide_cover(prs, dossier: Dossier):
            fill=RGBColor(0x2D, 0x3A, 0x6E), line_color=RGBColor(0x4A, 0x5A, 0x9A), line_width=0.5)
     _text(slide, "CONFIDENCIAL", 0.8, 5.62, 2.0, 0.35, size=10, color=ICE_BLUE, bold=True, align=PP_ALIGN.CENTER)
 
-    _text(slide, datetime.now().strftime("%B %Y"), 0.8, 6.2, 3, 0.4, size=12, color=MUTED)
+    _MONTHS_PT = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
+                  7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
+    now = datetime.now()
+    _text(slide, f"{_MONTHS_PT[now.month]} {now.year}", 0.8, 6.2, 3, 0.4, size=12, color=MUTED)
 
     # Right side KPIs
     _shape(slide, MSO_SHAPE.RECTANGLE, 11.5, 1.5, 0.04, 4.5, fill=ACCENT)
@@ -253,19 +256,19 @@ def _slide_summary(prs, dossier: Dossier):
 
     info = []
     if p.business_model.value:
-        info.append(("Modelo", str(p.business_model.value)[:60]))
+        info.append(("Modelo", str(p.business_model.value)[:80]))
     if p.headquarters.value:
         info.append(("Sede", str(p.headquarters.value)))
     if p.target_audience.value:
-        info.append(("Público-Alvo", str(p.target_audience.value)[:60]))
+        info.append(("Público-Alvo", str(p.target_audience.value)[:80]))
     t = dossier.transaction
     if t.advisor.value:
         info.append(("Advisor", str(t.advisor.value)))
 
     for i, (label, value) in enumerate(info[:5]):
-        y = 3.8 + i * 0.55
+        y = 3.8 + i * 0.6
         _text(slide, label, 7.5, y, 2, 0.22, size=9, color=MUTED, bold=True)
-        _text(slide, value, 7.5, y + 0.2, 5.3, 0.3, size=12, color=DARK_TEXT)
+        _text(slide, value, 7.5, y + 0.2, 5.5, 0.4, size=11, color=DARK_TEXT)
 
     _footer(slide, dossier.metadata.project_name, 2)
 
@@ -283,39 +286,39 @@ def _slide_company(prs, dossier: Dossier):
         ("Razão Social", _safe(p.legal_name.value)),
         ("Nome Fantasia", _safe(p.trade_name.value)),
         ("Setor", _safe(p.sector.value)),
-        ("Modelo de Negócio", _safe(p.business_model.value)),
-        ("Público-Alvo", _safe(p.target_audience.value)),
+        ("Modelo de Negócio", _safe(p.business_model.value)[:70]),
+        ("Público-Alvo", _safe(p.target_audience.value)[:70]),
         ("Sede", _safe(p.headquarters.value)),
         ("Fundação", _safe(p.founding_year.value)),
         ("Nº Lojas", _safe(p.number_of_stores.value)),
         ("Nº Funcionários", _safe(p.number_of_employees.value)),
     ]
 
-    # Two columns
+    # Two columns: long fields left, short fields right
     col1 = fields[:5]
     col2 = fields[5:]
 
     for i, (label, val) in enumerate(col1):
-        y = 1.3 + i * 0.65
-        _text(slide, label, 0.8, y, 2.5, 0.25, size=10, color=MUTED, bold=True)
-        _text(slide, val, 0.8, y + 0.22, 5.5, 0.35, size=13, color=DARK_TEXT)
+        y = 1.3 + i * 0.75
+        _text(slide, label, 0.8, y, 2.5, 0.22, size=10, color=MUTED, bold=True)
+        _text(slide, val, 0.8, y + 0.2, 5.5, 0.45, size=12, color=DARK_TEXT)
         if i < len(col1) - 1:
-            _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, y + 0.55, 5.5, 0.007, fill=BORDER_LIGHT)
+            _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, y + 0.65, 5.5, 0.007, fill=BORDER_LIGHT)
 
     for i, (label, val) in enumerate(col2):
-        y = 1.3 + i * 0.65
-        _text(slide, label, 7.3, y, 2.5, 0.25, size=10, color=MUTED, bold=True)
-        _text(slide, val, 7.3, y + 0.22, 5.0, 0.35, size=13, color=DARK_TEXT)
+        y = 1.3 + i * 0.75
+        _text(slide, label, 7.3, y, 2.5, 0.22, size=10, color=MUTED, bold=True)
+        _text(slide, val, 7.3, y + 0.2, 5.0, 0.45, size=12, color=DARK_TEXT)
         if i < len(col2) - 1:
-            _shape(slide, MSO_SHAPE.RECTANGLE, 7.3, y + 0.55, 5.0, 0.007, fill=BORDER_LIGHT)
+            _shape(slide, MSO_SHAPE.RECTANGLE, 7.3, y + 0.65, 5.0, 0.007, fill=BORDER_LIGHT)
 
     # Description box
     if p.description.value:
-        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 4.8, 11.7, 1.5,
+        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 5.2, 11.7, 1.3,
                fill=WHITE, line_color=BORDER_LIGHT, line_width=0.5)
-        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 4.8, 0.06, 1.5, fill=ACCENT)
-        _text(slide, "Descrição", 1.1, 4.9, 3, 0.3, size=12, color=NAVY, bold=True)
-        _text(slide, str(p.description.value), 1.1, 5.2, 11.0, 1.0, size=11, color=DARK_TEXT)
+        _shape(slide, MSO_SHAPE.RECTANGLE, 0.8, 5.2, 0.06, 1.3, fill=ACCENT)
+        _text(slide, "Descrição", 1.1, 5.3, 3, 0.3, size=12, color=NAVY, bold=True)
+        _text(slide, str(p.description.value), 1.1, 5.6, 11.0, 0.8, size=11, color=DARK_TEXT)
 
     _footer(slide, dossier.metadata.project_name, 3)
 
@@ -334,7 +337,7 @@ def _slide_executives(prs, dossier: Dossier):
         rows = []
         for ex in execs:
             pct = f"{ex.ownership_pct}%" if ex.ownership_pct else "—"
-            bg = (ex.background or "—")[:50]
+            bg = (ex.background or "—")[:80]
             rows.append([ex.name, ex.role or "—", pct, bg])
 
         _add_table(slide, headers, rows, 0.8, 1.3, 11.7)
@@ -590,9 +593,14 @@ def _slide_market(prs, dossier: Dossier):
     ms_list = dossier.market.market_sizes
     for i, ms in enumerate(ms_list[:3]):
         x = 0.8 + i * 4.1
-        val = f"{ms.unit} {ms.value}" if ms.value else "—"
+        val = f"{ms.unit} {ms.value:,.1f}" if ms.value else f"{ms.unit} —"
         label = f"Mercado {ms.geography} {ms.year}"
-        cagr = f"CAGR {ms.cagr * 100:.1f}%" if ms.cagr else "—"
+        # Auto-detect CAGR format: <1 = decimal (0.033), >=1 = already percentage (3.3)
+        if ms.cagr:
+            cagr_pct = ms.cagr * 100 if ms.cagr < 1 else ms.cagr
+            cagr = f"CAGR {cagr_pct:.1f}%"
+        else:
+            cagr = "—"
         accent = [ACCENT, ACCENT_GREEN, NAVY][i % 3]
         _side_card(slide, val, label, cagr, x, 1.3, accent=accent)
 
@@ -743,18 +751,190 @@ def _slide_gaps(prs, dossier: Dossier):
 
 
 # ═══════════════════════════════════════════════════════════════
+# VALUATION SLIDES
+# ═══════════════════════════════════════════════════════════════
+def _slide_valuation_table(prs, dossier: Dossier, valuation_data: dict):
+    """Slide 14: Valuation comparison table with KPI cards."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = LIGHT_BG
+
+    _header(slide, "Valuation — Cenários")
+
+    summaries = valuation_data.get("summaries", [])
+    inputs = valuation_data.get("inputs", {})
+
+    if not summaries:
+        _text(slide, "Dados de valuation não disponíveis", 0.8, 2, 8, 0.5, size=14, color=MUTED)
+        _footer(slide, dossier.metadata.project_name, 14)
+        return
+
+    # KPI cards: WACC, Stake, IRR (base), MOIC (base)
+    wacc = inputs.get("wacc", {})
+    base = next((s for s in summaries if s.get("scenario_name", "").lower() == "base"), summaries[0])
+
+    cards = [
+        (f"{wacc.get('wacc', 0)*100:.1f}%", "WACC", NAVY),
+        (f"{inputs.get('stake_pct', 0)*100:.0f}%", "Stake investidor", ACCENT),
+        (f"{base.get('irr', 0)*100:.1f}%", "IRR (caso base)", ACCENT_GREEN),
+        (f"{base.get('moic', 0):.2f}x", "MOIC (caso base)", ACCENT_AMBER),
+    ]
+
+    card_w = 2.8
+    gap = 0.3
+    start_x = 0.8
+    for i, (val, label, accent) in enumerate(cards):
+        x = start_x + i * (card_w + gap)
+        _card(slide, val, label, x, 1.2, w=card_w, h=1.5, accent=accent)
+
+    # Comparison table
+    headers = ["Cenário", "DCF Perp", "DCF Exit", "EV/EBITDA", "EV/Rev", "IRR", "MOIC"]
+    rows = []
+    base_row = -1
+    for i, s in enumerate(summaries):
+        name = s.get("scenario_name", f"Cenário {i+1}")
+        if name.lower() == "base":
+            base_row = i
+        rows.append([
+            name,
+            f"{s.get('dcf_perpetuity', 0):,.0f}",
+            f"{s.get('dcf_exit_multiple', 0):,.0f}",
+            f"{s.get('multiples_ev_ebitda', 0):,.0f}",
+            f"{s.get('multiples_ev_revenue', 0):,.0f}",
+            f"{s.get('irr', 0)*100:.1f}%",
+            f"{s.get('moic', 0):.2f}x",
+        ])
+
+    _add_table(slide, headers, rows, 0.8, 3.1, 11.7, row_h=0.4, highlight_row=base_row)
+
+    # Unit note
+    _text(slide, "EV em BRL k  |  Entry: DCF equity  |  Exit: múltiplo × EBITDA terminal",
+          0.8, 5.0, 8, 0.25, size=9, color=MUTED)
+
+    # WACC breakdown on right
+    _shape(slide, MSO_SHAPE.RECTANGLE, 9.5, 5.3, 3.0, 1.5,
+           fill=WHITE, line_color=BORDER_LIGHT, line_width=0.5)
+    _text(slide, "WACC", 9.7, 5.35, 2, 0.25, size=11, color=NAVY, bold=True)
+    wacc_lines = [
+        f"Ke: {wacc.get('cost_of_equity', 0)*100:.1f}%",
+        f"Kd pós-tax: {wacc.get('cost_of_debt_aftertax', 0)*100:.1f}%",
+        f"E/V: {wacc.get('equity_to_total', 0)*100:.0f}% | D/V: {wacc.get('debt_to_total', 0)*100:.0f}%",
+    ]
+    for j, line in enumerate(wacc_lines):
+        _text(slide, line, 9.7, 5.65 + j * 0.3, 2.6, 0.25, size=9, color=DARK_TEXT)
+
+    _footer(slide, dossier.metadata.project_name, 14)
+
+
+def _slide_valuation_chart(prs, dossier: Dossier, valuation_data: dict):
+    """Slide 15: EV range chart (horizontal bars per scenario)."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = LIGHT_BG
+
+    _header(slide, "Valuation — Faixa de EV")
+
+    summaries = valuation_data.get("summaries", [])
+    if not summaries:
+        _text(slide, "Dados de valuation não disponíveis", 0.8, 2, 8, 0.5, size=14, color=MUTED)
+        _footer(slide, dossier.metadata.project_name, 15)
+        return
+
+    # Build horizontal bar chart showing EV range per scenario
+    fig, ax = plt.subplots(figsize=(8, 4))
+    fig.patch.set_facecolor("#F5F7FA")
+    ax.set_facecolor("#F5F7FA")
+
+    names = [s.get("scenario_name", "?") for s in summaries]
+    lows = [s.get("equity_range_low", 0) / 1000 for s in summaries]  # Convert to MM
+    highs = [s.get("equity_range_high", 0) / 1000 for s in summaries]
+    dcf_perps = [s.get("dcf_perpetuity", 0) / 1000 for s in summaries]
+    dcf_exits = [s.get("dcf_exit_multiple", 0) / 1000 for s in summaries]
+
+    y_pos = range(len(names))
+    colors_bar = ["#EF4444", "#1E2761", "#10B981"]  # red, navy, green
+    colors_bar = colors_bar[:len(names)]
+
+    # Draw range bars
+    for i, (name, lo, hi) in enumerate(zip(names, lows, highs)):
+        # Range bar (low to high)
+        ax.barh(i, hi - lo, left=lo, height=0.5, color=colors_bar[i], alpha=0.3, zorder=2)
+        # DCF perpetuity marker
+        ax.plot(dcf_perps[i], i, 'D', color=colors_bar[i], markersize=10, zorder=4)
+        # DCF exit marker
+        ax.plot(dcf_exits[i], i, 's', color=colors_bar[i], markersize=9, zorder=4, alpha=0.7)
+        # Labels
+        ax.text(lo - max(highs) * 0.02, i, f"{lo:.0f}",
+                ha="right", va="center", fontsize=8, color=colors_bar[i], fontweight="bold")
+        ax.text(hi + max(highs) * 0.02, i, f"{hi:.0f}",
+                ha="left", va="center", fontsize=8, color=colors_bar[i], fontweight="bold")
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(names, fontsize=11, color="#1E2761", fontweight="bold")
+    ax.set_xlabel("Enterprise Value (BRL MM)", fontsize=10, color="#64748B")
+    ax.invert_yaxis()
+
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='D', color='w', markerfacecolor='#64748B', markersize=8, label='DCF Perpetuidade'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='#64748B', markersize=8, label='DCF Exit Multiple'),
+    ]
+    ax.legend(handles=legend_elements, loc='lower right', fontsize=8, frameon=False)
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#E2E8F0")
+    ax.spines["bottom"].set_color("#E2E8F0")
+    ax.tick_params(colors="#64748B", labelsize=8)
+    ax.xaxis.grid(True, color="#E2E8F0", linewidth=0.5, zorder=0)
+    ax.set_axisbelow(True)
+    plt.tight_layout()
+
+    img = _chart_to_image(fig)
+    slide.shapes.add_picture(img, Inches(0.5), Inches(1.1), Inches(8.5), Inches(4.5))
+
+    # Right side: "What needs to be true" for base case
+    scenarios_data = valuation_data.get("scenarios", {})
+    base_sc = scenarios_data.get("base", {})
+    wnbt = base_sc.get("what_needs_to_be_true", [])
+
+    if wnbt:
+        _shape(slide, MSO_SHAPE.RECTANGLE, 9.3, 1.1, 3.5, 4.5,
+               fill=WHITE, line_color=BORDER_LIGHT, line_width=0.5)
+        _shape(slide, MSO_SHAPE.RECTANGLE, 9.3, 1.1, 0.06, 4.5, fill=ACCENT)
+        _text(slide, "What needs to be true", 9.6, 1.2, 3.0, 0.3, size=12, color=NAVY, bold=True)
+        _text(slide, "(caso base)", 9.6, 1.45, 3.0, 0.2, size=9, color=MUTED)
+
+        for j, item in enumerate(wnbt[:6]):
+            y = 1.8 + j * 0.6
+            cat = item.get("category", "")
+            cond = item.get("condition", "")
+            _text(slide, cat, 9.6, y, 3.0, 0.2, size=9, color=ACCENT, bold=True)
+            _text(slide, cond[:55], 9.6, y + 0.2, 3.0, 0.3, size=9, color=DARK_TEXT)
+
+    # Terminal metrics
+    _text(slide, "Faixa: DCF Perpetuidade (◆) a Múltiplos (barra) | BRL MM",
+          0.8, 5.8, 8, 0.25, size=9, color=MUTED)
+
+    _footer(slide, dossier.metadata.project_name, 15)
+
+
+# ═══════════════════════════════════════════════════════════════
 # MAIN EXPORT FUNCTION
 # ═══════════════════════════════════════════════════════════════
-def export_pptx(dossier: Dossier, output_path: str, verbose: bool = False) -> str:
+def export_pptx(dossier: Dossier, output_path: str, valuation_data: dict | None = None,
+                verbose: bool = False) -> int:
     """Export dossier to a formatted PowerPoint presentation.
 
     Args:
         dossier: The dossier to export
         output_path: Path for the output .pptx file
+        valuation_data: Optional valuation results from run_full_valuation
         verbose: Print progress
 
     Returns:
-        The output file path
+        Number of slides created
     """
     if verbose:
         print("  [PPT] Gerando apresentação...")
@@ -776,13 +956,20 @@ def export_pptx(dossier: Dossier, output_path: str, verbose: bool = False) -> st
     _slide_market(prs, dossier)
     _slide_competitors(prs, dossier)
     _slide_transaction(prs, dossier)
-    _slide_gaps(prs, dossier)
+
+    # Valuation slides (14-15) — only if data available
+    if valuation_data and valuation_data.get("summaries"):
+        _slide_valuation_table(prs, dossier, valuation_data)
+        _slide_valuation_chart(prs, dossier, valuation_data)
+
+    _slide_gaps(prs, dossier)  # Always last
 
     # Save
+    n_slides = len(prs.slides)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     prs.save(output_path)
 
     if verbose:
-        print(f"  [PPT] ✅ Salvo em: {output_path} ({len(prs.slides)} slides)")
+        print(f"  [PPT] ✅ Salvo em: {output_path} ({n_slides} slides)")
 
-    return output_path
+    return n_slides
