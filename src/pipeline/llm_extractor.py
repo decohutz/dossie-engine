@@ -22,7 +22,10 @@ from ..pipeline.classifier import ClassifiedPage
 
 # Enhanced extraction (optional dependencies)
 try:
-    from ..parsers.ocr_helper import extract_layout_text, ocr_page, is_ocr_available
+    from ..parsers.ocr_helper import (
+        extract_layout_text, ocr_page, is_ocr_available,
+        ocr_competitor_logos, ocr_column_strips,
+    )
     HAS_ENHANCED = True
 except ImportError:
     HAS_ENHANCED = False
@@ -500,39 +503,93 @@ def extract_market_llm(
         if verbose:
             print(f"    → After retry: {len(chapter.market_sizes)} market sizes")
 
-    # ── COMPETITORS (with OCR for logos) ───────────────────────
+    # ── COMPETITORS (with spatial OCR for logos) ───────────────────────
     if verbose:
         print(f"  [LLM] Extracting competitors...")
 
     for page in market_pages:
         text_lower = page.block.clean_text.lower()
-        if "top 5" in text_lower or "companhias" in text_lower or "concorrent" in text_lower:
-            # Try OCR to capture logo text
-            page_text = page.block.clean_text
-            if HAS_ENHANCED and pdf_path and is_ocr_available():
-                ocr_text = ocr_page(pdf_path, page.block.page_number, verbose=verbose)
+        if not ("top 5" in text_lower or "companhias" in text_lower
+                or "concorrent" in text_lower or "ranking" in text_lower
+                or "player" in text_lower or "landscape" in text_lower):
+            continue
+
+        page_text = page.block.clean_text
+        page_num = page.block.page_number
+
+        # ── Strategy 1: Spatial OCR on embedded logo images ──
+        logo_labels = []
+        strips = None
+        if HAS_ENHANCED and pdf_path and is_ocr_available():
+            logos = ocr_competitor_logos(pdf_path, page_num, verbose=verbose)
+            if logos:
+                logo_labels = logos
+                logo_section = "\n\nLOGOS/MARCAS IDENTIFICADOS POR OCR (da esquerda para a direita):\n"
+                for idx, logo in enumerate(logos, 1):
+                    logo_section += f"  LOGO_{idx}: {logo['text']}\n"
+                page_text += logo_section
+
+            # ── Strategy 2: Fallback column strips if no logos found ──
+            if not logos:
+                strips = ocr_column_strips(pdf_path, page_num, n_columns=5, verbose=verbose)
+                if strips:
+                    logo_section = "\n\nTEXTO IDENTIFICADO POR OCR (colunas da esquerda para a direita):\n"
+                    for s in strips:
+                        logo_section += f"  COLUNA_{s['column_index']+1}: {s['text']}\n"
+                    page_text += logo_section
+
+            # ── Strategy 3: Full page OCR as last resort ──
+            if not logos and not strips:
+                ocr_text = ocr_page(pdf_path, page_num, verbose=verbose)
                 if ocr_text:
                     if verbose:
-                        print(f"    🔍 OCR enriching competitor page {page.block.page_number}")
-                    page_text = f"{page.block.clean_text}\n\nTEXTO ADICIONAL EXTRAÍDO DE IMAGENS/LOGOS:\n{ocr_text}"
+                        print(f"    🔍 OCR enriching competitor page {page_num}")
+                    page_text += f"\n\nTEXTO ADICIONAL EXTRAÍDO DE IMAGENS/LOGOS:\n{ocr_text}"
 
-            system, prompt = prompts.prompt_competitors(page_text)
-            data = client.extract_json(prompt, system)
+        system, prompt = prompts.prompt_competitors(page_text)
+        data = client.extract_json(prompt, system)
 
-            if data and isinstance(data, dict):
-                for comp in (data.get("competitors") or []):
-                    if not isinstance(comp, dict):
-                        continue
-                    name = _safe_str(comp.get("name"))
-                    if name and not any(c.name == name for c in chapter.competitors):
-                        chapter.competitors.append(Competitor(
-                            name=name,
-                            stores=comp.get("stores"),
-                            revenue=comp.get("revenue"),
-                            revenue_unit=_safe_str(comp.get("revenue_unit")) or None,
-                            investor=_safe_str(comp.get("investor")) or None,
-                            evidence=_evidence(source_file, page.block.page_number, name),
-                        ))
+        if data and isinstance(data, dict):
+            for comp in (data.get("competitors") or []):
+                if not isinstance(comp, dict):
+                    continue
+                name = _safe_str(comp.get("name"))
+                if not name:
+                    continue
+
+                # ── Post-processing: filter out non-retailers ──
+                name_lower = name.lower()
+
+                # Skip if it's clearly a manufacturer, not a retailer
+                manufacturer_names = {
+                    "hoya", "carl zeiss", "zeiss", "rodenstock",
+                    "transitions", "varilux", "crizal", "nikon",
+                }
+                if name_lower in manufacturer_names:
+                    if verbose:
+                        print(f"    ⚠️  Skipping manufacturer: {name}")
+                    continue
+
+                # Skip if it's a fund/investor, not a company
+                investor_keywords = {"investimentos", "capital", "partners",
+                                     "ventures", "fund", "gestão", "asset"}
+                if any(kw in name_lower for kw in investor_keywords):
+                    if verbose:
+                        print(f"    ⚠️  Skipping investor entity: {name}")
+                    continue
+
+                # Deduplicate
+                if any(c.name.lower() == name_lower for c in chapter.competitors):
+                    continue
+
+                chapter.competitors.append(Competitor(
+                    name=name,
+                    stores=comp.get("stores"),
+                    revenue=comp.get("revenue"),
+                    revenue_unit=_safe_str(comp.get("revenue_unit")) or None,
+                    investor=_safe_str(comp.get("investor")) or None,
+                    evidence=_evidence(source_file, page_num, name),
+                ))
 
     # ── MULTIPLES / PRECEDENT TRANSACTIONS ───────────────────
     if verbose:
