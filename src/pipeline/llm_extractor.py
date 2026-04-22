@@ -30,6 +30,18 @@ try:
 except ImportError:
     HAS_ENHANCED = False
 
+try:
+    from ..parsers.team_parser import parse_team_page
+    HAS_TEAM_PARSER = True
+except ImportError:
+    HAS_TEAM_PARSER = False
+
+try:
+    from ..parsers.competitor_parser import parse_competitor_page
+    HAS_COMPETITOR_PARSER = True
+except ImportError:
+    HAS_COMPETITOR_PARSER = False
+
 
 # ── Minimum thresholds for retry ──────────────────────────────
 MIN_TIMELINE_EVENTS = 5
@@ -41,6 +53,31 @@ def _safe_str(val) -> str:
     if val is None:
         return ""
     return str(val).strip()
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize a company name for deduplication.
+
+    Handles: accents ("Óticas" → "oticas"), whitespace collapsing,
+    common prefixes ("grupo", "rede", "oticas" with OR without a space
+    separator — so "Oticascarol" from OCR matches "Óticas Carol").
+    Used only for comparison, never stored.
+    """
+    import unicodedata
+    if not name:
+        return ""
+    s = name.strip().lower()
+    # Strip accents
+    s = "".join(c for c in unicodedata.normalize("NFD", s)
+                if unicodedata.category(c) != "Mn")
+    # Collapse whitespace and strip all non-alphanumeric first
+    s = "".join(ch for ch in s if ch.isalnum())
+    # Then strip common prefixes (works whether OCR had space or not)
+    for prefix in ("grupo", "rede", "holding", "oticas", "otica"):
+        if s.startswith(prefix) and len(s) > len(prefix):
+            s = s[len(prefix):]
+            break
+    return s
 
 
 def _evidence(source: str, page: int, excerpt: str = "", confidence: float = 0.75) -> Evidence:
@@ -230,36 +267,67 @@ def extract_company_llm(
                     if val and getattr(profile, field_name).is_empty:
                         setattr(profile, field_name, _tracked(val, source_file, pg, field_name))
 
-    # ── EXECUTIVES (regular first, layout as retry) ────────────
+    # ── EXECUTIVES ──────────────────────────────────────────────
+    # Strategy:
+    #   1. Try the structural parser (column-anchored, no LLM). This is
+    #      deterministic and correctly handles the grid layout that trips
+    #      up linear text extraction (role-to-name cyclic shifts).
+    #   2. If it fails (atypical layout) or produces < 3 execs, fall back
+    #      to the LLM flow.
     if verbose:
         print(f"  [LLM] Extracting executives...")
 
     exec_pages = [p for p in classified if p.sub_chapter == "team"] or company_pages
 
-    # First pass: regular text (stable)
-    for page in exec_pages:
-        system, prompt = prompts.prompt_executives(page.block.clean_text)
-        data = client.extract_json(prompt, system)
+    # ── Structural parser first ──
+    structural_success = False
+    if HAS_TEAM_PARSER and pdf_path:
+        for page in exec_pages:
+            parsed = parse_team_page(pdf_path, page.block.page_number, verbose)
+            if parsed and len(parsed) >= 3:
+                for ex in parsed:
+                    name = ex.get("name", "").strip()
+                    if name and not any(e.name == name for e in chapter.executives):
+                        chapter.executives.append(Executive(
+                            name=name,
+                            role=ex.get("role") or "",
+                            tenure_years=ex.get("tenure_years"),
+                            ownership_pct=ex.get("ownership_pct"),
+                            background=ex.get("background"),
+                            evidence=_evidence(source_file, page.block.page_number, name),
+                        ))
+                structural_success = True
+                if verbose:
+                    print(f"    ✅ Structural parser: {len(parsed)} executives on page {page.block.page_number}")
+                break  # one good team page is enough
 
-        if data and isinstance(data, dict):
-            for ex in (data.get("executives") or []):
-                if not isinstance(ex, dict):
-                    continue
-                name = _safe_str(ex.get("name"))
-                if name and not any(e.name == name for e in chapter.executives):
-                    role = _safe_str(ex.get("role"))
-                    entity = _safe_str(ex.get("entity"))
-                    if entity and entity.lower() not in role.lower():
-                        role = f"{role} ({entity})"
+    # ── LLM fallback (only when structural parser didn't find enough) ──
+    if not structural_success:
+        if verbose:
+            print(f"    🔄 Structural parser didn't find a grid; falling back to LLM")
+        for page in exec_pages:
+            system, prompt = prompts.prompt_executives(page.block.clean_text)
+            data = client.extract_json(prompt, system)
 
-                    chapter.executives.append(Executive(
-                        name=name,
-                        role=role,
-                        tenure_years=ex.get("tenure_years"),
-                        ownership_pct=ex.get("ownership_pct"),
-                        background=_safe_str(ex.get("background")) or None,
-                        evidence=_evidence(source_file, page.block.page_number, name),
-                    ))
+            if data and isinstance(data, dict):
+                for ex in (data.get("executives") or []):
+                    if not isinstance(ex, dict):
+                        continue
+                    name = _safe_str(ex.get("name"))
+                    if name and not any(e.name == name for e in chapter.executives):
+                        role = _safe_str(ex.get("role"))
+                        entity = _safe_str(ex.get("entity"))
+                        if entity and entity.lower() not in role.lower():
+                            role = f"{role} ({entity})"
+
+                        chapter.executives.append(Executive(
+                            name=name,
+                            role=role,
+                            tenure_years=ex.get("tenure_years"),
+                            ownership_pct=ex.get("ownership_pct"),
+                            background=_safe_str(ex.get("background")) or None,
+                            evidence=_evidence(source_file, page.block.page_number, name),
+                        ))
 
     # Retry pass: if any executive has empty role, retry with layout text
     execs_without_role = [e for e in chapter.executives if not e.role]
@@ -503,93 +571,153 @@ def extract_market_llm(
         if verbose:
             print(f"    → After retry: {len(chapter.market_sizes)} market sizes")
 
-    # ── COMPETITORS (with spatial OCR for logos) ───────────────────────
+    # ── COMPETITORS ────────────────────────────────────────────
+    # Strategy: try the structural parser first on pages that look like
+    # a Top-N ranking table. It reads numeric rows by x-alignment and matches
+    # OCR'd logos to rows by y-coordinate — deterministic and avoids the
+    # common LLM failure of pulling manufacturer names from elsewhere on the
+    # same page. Pages handled structurally are skipped by the LLM pass.
     if verbose:
         print(f"  [LLM] Extracting competitors...")
 
-    for page in market_pages:
-        text_lower = page.block.clean_text.lower()
-        if not ("top 5" in text_lower or "companhias" in text_lower
-                or "concorrent" in text_lower or "ranking" in text_lower
-                or "player" in text_lower or "landscape" in text_lower):
-            continue
+    pages_handled_structurally: set[int] = set()
 
-        page_text = page.block.clean_text
-        page_num = page.block.page_number
+    if HAS_COMPETITOR_PARSER and pdf_path:
+        for page in market_pages:
+            text_lower = page.block.clean_text.lower()
+            if not ("top 5" in text_lower or "top 10" in text_lower
+                    or "ranking" in text_lower or "principais players" in text_lower
+                    or "companhias no varejo" in text_lower):
+                continue
+            page_num = page.block.page_number
+            parsed = parse_competitor_page(pdf_path, page_num, verbose=verbose)
+            if parsed and len(parsed) >= 3:
+                for comp in parsed:
+                    name_norm = _normalize_name(comp["name"])
+                    # Skip if placeholder ("Empresa nao identificada N") collides
+                    # with another placeholder — use literal comparison for those
+                    if name_norm.startswith("empresanaoidentificada"):
+                        if any(c.name == comp["name"] for c in chapter.competitors):
+                            continue
+                    elif any(_normalize_name(c.name) == name_norm for c in chapter.competitors):
+                        continue
+                    chapter.competitors.append(Competitor(
+                        name=comp["name"],
+                        stores=comp.get("stores"),
+                        revenue=comp.get("revenue"),
+                        revenue_unit=comp.get("revenue_unit"),
+                        investor=comp.get("investor"),
+                        evidence=_evidence(source_file, page_num, comp["name"]),
+                    ))
+                pages_handled_structurally.add(page_num)
+                if verbose:
+                    print(f"    ✅ Structural parser: {len(parsed)} competitors on page {page_num}")
 
-        # ── Strategy 1: Spatial OCR on embedded logo images ──
-        logo_labels = []
-        strips = None
-        if HAS_ENHANCED and pdf_path and is_ocr_available():
-            logos = ocr_competitor_logos(pdf_path, page_num, verbose=verbose)
-            if logos:
-                logo_labels = logos
-                logo_section = "\n\nLOGOS/MARCAS IDENTIFICADOS POR OCR (da esquerda para a direita):\n"
-                for idx, logo in enumerate(logos, 1):
-                    logo_section += f"  LOGO_{idx}: {logo['text']}\n"
-                page_text += logo_section
+    # ── LLM pass (for pages without a ranking-table layout) ──
+    # If the structural parser already found a Top-N table on some page,
+    # skip the LLM pass entirely. Other pages triggered by the generic
+    # keywords ("player", "companhias") are typically about M&A deals or
+    # the industry value chain and pollute the competitor list with
+    # non-retailers that slip past the dedupe (e.g. "newlentes" from a
+    # transactions page).
+    if pages_handled_structurally:
+        if verbose:
+            print(f"    ⏭️  Skipping LLM competitor pass (structural parser handled "
+                  f"page(s) {sorted(pages_handled_structurally)})")
+    else:
+        for page in market_pages:
+            page_num = page.block.page_number
 
-            # ── Strategy 2: Fallback column strips if no logos found ──
-            if not logos:
-                strips = ocr_column_strips(pdf_path, page_num, n_columns=5, verbose=verbose)
-                if strips:
-                    logo_section = "\n\nTEXTO IDENTIFICADO POR OCR (colunas da esquerda para a direita):\n"
-                    for s in strips:
-                        logo_section += f"  COLUNA_{s['column_index']+1}: {s['text']}\n"
+            text_lower = page.block.clean_text.lower()
+            if not ("top 5" in text_lower or "companhias" in text_lower
+                    or "concorrent" in text_lower or "ranking" in text_lower
+                    or "player" in text_lower or "landscape" in text_lower):
+                continue
+
+            page_text = page.block.clean_text
+
+            # ── Strategy 1: Spatial OCR on embedded logo images ──
+            logo_labels = []
+            strips = None
+            if HAS_ENHANCED and pdf_path and is_ocr_available():
+                logos = ocr_competitor_logos(pdf_path, page_num, verbose=verbose)
+                if logos:
+                    logo_labels = logos
+                    logo_section = "\n\nLOGOS/MARCAS IDENTIFICADOS POR OCR (da esquerda para a direita):\n"
+                    for idx, logo in enumerate(logos, 1):
+                        logo_section += f"  LOGO_{idx}: {logo['text']}\n"
                     page_text += logo_section
 
-            # ── Strategy 3: Full page OCR as last resort ──
-            if not logos and not strips:
-                ocr_text = ocr_page(pdf_path, page_num, verbose=verbose)
-                if ocr_text:
-                    if verbose:
-                        print(f"    🔍 OCR enriching competitor page {page_num}")
-                    page_text += f"\n\nTEXTO ADICIONAL EXTRAÍDO DE IMAGENS/LOGOS:\n{ocr_text}"
+                # ── Strategy 2: Fallback column strips if no logos found ──
+                if not logos:
+                    strips = ocr_column_strips(pdf_path, page_num, n_columns=5, verbose=verbose)
+                    if strips:
+                        logo_section = "\n\nTEXTO IDENTIFICADO POR OCR (colunas da esquerda para a direita):\n"
+                        for s in strips:
+                            logo_section += f"  COLUNA_{s['column_index']+1}: {s['text']}\n"
+                        page_text += logo_section
 
-        system, prompt = prompts.prompt_competitors(page_text)
-        data = client.extract_json(prompt, system)
+                # ── Strategy 3: Full page OCR as last resort ──
+                if not logos and not strips:
+                    ocr_text = ocr_page(pdf_path, page_num, verbose=verbose)
+                    if ocr_text:
+                        if verbose:
+                            print(f"    🔍 OCR enriching competitor page {page_num}")
+                        page_text += f"\n\nTEXTO ADICIONAL EXTRAÍDO DE IMAGENS/LOGOS:\n{ocr_text}"
 
-        if data and isinstance(data, dict):
-            for comp in (data.get("competitors") or []):
-                if not isinstance(comp, dict):
-                    continue
-                name = _safe_str(comp.get("name"))
-                if not name:
-                    continue
+            system, prompt = prompts.prompt_competitors(page_text)
+            data = client.extract_json(prompt, system)
 
-                # ── Post-processing: filter out non-retailers ──
-                name_lower = name.lower()
+            if data and isinstance(data, dict):
+                for comp in (data.get("competitors") or []):
+                    if not isinstance(comp, dict):
+                        continue
+                    name = _safe_str(comp.get("name"))
+                    if not name:
+                        continue
 
-                # Skip if it's clearly a manufacturer, not a retailer
-                manufacturer_names = {
-                    "hoya", "carl zeiss", "zeiss", "rodenstock",
-                    "transitions", "varilux", "crizal", "nikon",
-                }
-                if name_lower in manufacturer_names:
-                    if verbose:
-                        print(f"    ⚠️  Skipping manufacturer: {name}")
-                    continue
+                    # ── Post-processing: filter out non-retailers ──
+                    name_lower = name.lower()
 
-                # Skip if it's a fund/investor, not a company
-                investor_keywords = {"investimentos", "capital", "partners",
-                                     "ventures", "fund", "gestão", "asset"}
-                if any(kw in name_lower for kw in investor_keywords):
-                    if verbose:
-                        print(f"    ⚠️  Skipping investor entity: {name}")
-                    continue
+                    # Skip if it's clearly a manufacturer, not a retailer
+                    manufacturer_names = {
+                        "hoya", "carl zeiss", "zeiss", "rodenstock",
+                        "transitions", "varilux", "crizal", "nikon",
+                        "essilorluxottica", "essilor", "luxottica",
+                        "safilo", "marchon", "marcolin", "mitsui chemicals",
+                        "asahi kasei", "mazzucchelli", "evonik", "sabic",
+                        "ppg", "johnson & johnson", "j&j",
+                    }
+                    if name_lower in manufacturer_names:
+                        if verbose:
+                            print(f"    ⚠️  Skipping manufacturer: {name}")
+                        continue
 
-                # Deduplicate
-                if any(c.name.lower() == name_lower for c in chapter.competitors):
-                    continue
+                    # Skip if it's a fund/investor, not a company
+                    investor_keywords = {"investimentos", "capital", "partners",
+                                         "ventures", "fund", "gestão", "asset",
+                                         "smzto"}
+                    if any(kw in name_lower for kw in investor_keywords):
+                        if verbose:
+                            print(f"    ⚠️  Skipping investor entity: {name}")
+                        continue
 
-                chapter.competitors.append(Competitor(
-                    name=name,
-                    stores=comp.get("stores"),
-                    revenue=comp.get("revenue"),
-                    revenue_unit=_safe_str(comp.get("revenue_unit")) or None,
-                    investor=_safe_str(comp.get("investor")) or None,
-                    evidence=_evidence(source_file, page_num, name),
-                ))
+                    # Deduplicate (normalized: handles accents, prefixes, OCR concatenation)
+                    name_norm = _normalize_name(name)
+                    if name_norm and any(_normalize_name(c.name) == name_norm
+                                         for c in chapter.competitors):
+                        if verbose:
+                            print(f"    ⚠️  Skipping duplicate: {name}")
+                        continue
+
+                    chapter.competitors.append(Competitor(
+                        name=name,
+                        stores=comp.get("stores"),
+                        revenue=comp.get("revenue"),
+                        revenue_unit=_safe_str(comp.get("revenue_unit")) or None,
+                        investor=_safe_str(comp.get("investor")) or None,
+                        evidence=_evidence(source_file, page_num, name),
+                    ))
 
     # ── MULTIPLES / PRECEDENT TRANSACTIONS ───────────────────
     if verbose:

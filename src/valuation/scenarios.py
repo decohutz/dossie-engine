@@ -121,92 +121,212 @@ def _adjust_growth(base_rate: float, factor: float) -> float:
     return base_rate * factor
 
 
+def _consolidated_metrics(consolidated: list[ProjectionYear]) -> dict:
+    """Compute projected CAGR and terminal margins from a consolidated series.
+
+    Uses the TRANSITION from last historical to last projected year for the
+    projected CAGR — this is the horizon that actually drives valuation.
+    For margins, uses the terminal projected year.
+    """
+    hist = [y for y in consolidated if not y.is_projected and y.net_revenue > 0]
+    proj = [y for y in consolidated if y.is_projected and y.net_revenue > 0]
+
+    metrics = {
+        "proj_revenue_cagr": None,     # CAGR from last hist to last proj
+        "terminal_ebitda_margin": None,
+        "terminal_cogs_pct": None,
+        "terminal_sga_pct": None,
+        "terminal_revenue": None,
+        "terminal_ebitda": None,
+        "last_hist_revenue": None,
+        "last_proj_year": None,
+    }
+
+    if proj:
+        terminal = proj[-1]
+        metrics["terminal_revenue"] = terminal.net_revenue
+        metrics["terminal_ebitda"] = terminal.ebitda
+        metrics["last_proj_year"] = terminal.year
+        if terminal.net_revenue > 0:
+            metrics["terminal_ebitda_margin"] = terminal.ebitda / terminal.net_revenue
+            # COGS and SG&A come through negative in ProjectionYear; use abs
+            metrics["terminal_cogs_pct"] = abs(terminal.cogs) / terminal.net_revenue
+            metrics["terminal_sga_pct"] = abs(terminal.sga) / terminal.net_revenue
+
+    if hist and proj and hist[-1].net_revenue > 0:
+        metrics["last_hist_revenue"] = hist[-1].net_revenue
+        n_years = len(proj)  # steps from last hist to last proj
+        start = hist[-1].net_revenue
+        end = proj[-1].net_revenue
+        if start > 0 and end > 0 and n_years > 0:
+            metrics["proj_revenue_cagr"] = (end / start) ** (1 / n_years) - 1
+    elif len(proj) >= 2 and proj[0].net_revenue > 0 and proj[-1].net_revenue > 0:
+        # Fallback: CAGR within the projected span when no history is available
+        n_years = len(proj) - 1
+        if n_years > 0:
+            metrics["proj_revenue_cagr"] = (
+                proj[-1].net_revenue / proj[0].net_revenue
+            ) ** (1 / n_years) - 1
+
+    return metrics
+
+
 def _generate_what_needs_to_be_true(
     scenario_name: str,
-    base_assumptions: ModelAssumptions,
-    scenario_assumptions: ModelAssumptions,
+    scenario_consolidated: list[ProjectionYear],
+    base_consolidated: list[ProjectionYear] | None = None,
 ) -> list[WhatNeedsToBeTrueItem]:
-    """Generate 'what needs to be true' analysis for a scenario."""
-    items = []
+    """Generate 'what needs to be true' analysis grounded in the actual
+    projected consolidated numbers of this scenario.
+
+    Args:
+        scenario_name: "Base", "Pessimista", or "Otimista"
+        scenario_consolidated: this scenario's consolidated projection
+        base_consolidated: the base-case consolidated (for delta comparisons
+            on Pessimista/Otimista). Optional for Base itself.
+    """
+    items: list[WhatNeedsToBeTrueItem] = []
+    m = _consolidated_metrics(scenario_consolidated)
+
+    # Guard: if metrics couldn't be computed, return a minimal placeholder set
+    if m["proj_revenue_cagr"] is None or m["terminal_ebitda_margin"] is None:
+        items.append(WhatNeedsToBeTrueItem(
+            category="Execução",
+            condition="Métricas projetadas insuficientes para análise quantitativa",
+            metric="data_quality",
+            value=0,
+        ))
+        return items
+
+    cagr = m["proj_revenue_cagr"]
+    margin = m["terminal_ebitda_margin"]
+    cogs_pct = m["terminal_cogs_pct"]
+    sga_pct = m["terminal_sga_pct"]
+    terminal_year = m["last_proj_year"] or "terminal"
 
     if scenario_name == "Base":
         items.append(WhatNeedsToBeTrueItem(
             category="Receita",
-            condition=f"Crescimento de receita de {base_assumptions.revenue_growth_rate*100:.1f}% a.a. se mantém",
-            metric="revenue_growth_rate",
-            value=base_assumptions.revenue_growth_rate,
+            condition=f"Receita consolidada cresce a CAGR de {cagr*100:.1f}% a.a. "
+                      f"até {terminal_year} (conforme plano da empresa)",
+            metric="proj_revenue_cagr",
+            value=cagr,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Margem",
-            condition=f"Margem COGS estabiliza em {base_assumptions.cogs_pct_revenue*100:.1f}% da receita",
-            metric="cogs_pct_revenue",
-            value=base_assumptions.cogs_pct_revenue,
+            condition=f"Margem EBITDA consolidada atinge {margin*100:.1f}% em {terminal_year} "
+                      f"(COGS {cogs_pct*100:.1f}%, SG&A {sga_pct*100:.1f}% da receita)",
+            metric="terminal_ebitda_margin",
+            value=margin,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Operacional",
-            condition=f"SG&A se mantém em {base_assumptions.sga_pct_revenue*100:.1f}% da receita",
-            metric="sga_pct_revenue",
-            value=base_assumptions.sga_pct_revenue,
+            condition="Expansão e verticalização da operação executam conforme o plano "
+                      "apresentado na CIM",
+            metric="execution",
+            value=1.0,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Mercado",
-            condition="Plano de expansão e verticalização executa conforme previsto",
-            metric="execution",
+            condition="Mercado endereçável mantém as dinâmicas de crescimento projetadas "
+                      "pelo advisor",
+            metric="market",
             value=1.0,
         ))
 
     elif scenario_name == "Pessimista":
-        growth_reduction = (1 - scenario_assumptions.revenue_growth_rate / base_assumptions.revenue_growth_rate) * 100 \
-            if base_assumptions.revenue_growth_rate else 0
+        # Delta vs base for narrative precision
+        base_m = _consolidated_metrics(base_consolidated) if base_consolidated else {}
+        base_cagr = base_m.get("proj_revenue_cagr")
+        base_margin = base_m.get("terminal_ebitda_margin")
+
+        if base_cagr is not None and base_cagr > 0:
+            cagr_delta_pp = (cagr - base_cagr) * 100
+            receita_cond = (
+                f"Receita cresce a CAGR de {cagr*100:.1f}% a.a. "
+                f"({cagr_delta_pp:+.1f}pp vs. caso Base)"
+            )
+        else:
+            receita_cond = f"Receita cresce a CAGR de {cagr*100:.1f}% a.a."
         items.append(WhatNeedsToBeTrueItem(
             category="Receita",
-            condition=f"Crescimento de receita cai {growth_reduction:.0f}% vs. plano "
-                      f"({scenario_assumptions.revenue_growth_rate*100:.1f}% a.a.)",
-            metric="revenue_growth_rate",
-            value=scenario_assumptions.revenue_growth_rate,
+            condition=receita_cond,
+            metric="proj_revenue_cagr",
+            value=cagr,
         ))
+
+        if base_margin is not None:
+            margin_delta_pp = (margin - base_margin) * 100
+            margem_cond = (
+                f"Margem EBITDA terminal comprime para {margin*100:.1f}% "
+                f"({margin_delta_pp:+.1f}pp vs. Base) por pressão em COGS/SG&A"
+            )
+        else:
+            margem_cond = f"Margem EBITDA terminal em {margin*100:.1f}% reflete pressão de custos"
         items.append(WhatNeedsToBeTrueItem(
             category="Margem",
-            condition=f"Pressão em COGS: sobe para {scenario_assumptions.cogs_pct_revenue*100:.1f}% da receita",
-            metric="cogs_pct_revenue",
-            value=scenario_assumptions.cogs_pct_revenue,
+            condition=margem_cond,
+            metric="terminal_ebitda_margin",
+            value=margin,
         ))
+
         items.append(WhatNeedsToBeTrueItem(
             category="Operacional",
-            condition="Desaceleração na expansão de lojas, atrasos em verticalização",
+            condition="Plano de expansão sofre atrasos; churn da rede persiste ou acelera",
             metric="execution",
             value=0.6,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Mercado",
-            condition="Competição intensifica ou mercado cresce abaixo do esperado",
+            condition="Intensificação competitiva ou crescimento de mercado abaixo do projetado",
             metric="market",
             value=0.7,
         ))
 
     elif scenario_name == "Otimista":
+        base_m = _consolidated_metrics(base_consolidated) if base_consolidated else {}
+        base_cagr = base_m.get("proj_revenue_cagr")
+        base_margin = base_m.get("terminal_ebitda_margin")
+
+        if base_cagr is not None and base_cagr > 0:
+            cagr_delta_pp = (cagr - base_cagr) * 100
+            receita_cond = (
+                f"Receita cresce a CAGR de {cagr*100:.1f}% a.a. "
+                f"({cagr_delta_pp:+.1f}pp vs. caso Base)"
+            )
+        else:
+            receita_cond = f"Receita cresce a CAGR de {cagr*100:.1f}% a.a."
         items.append(WhatNeedsToBeTrueItem(
             category="Receita",
-            condition=f"Crescimento acelerado: {scenario_assumptions.revenue_growth_rate*100:.1f}% a.a. "
-                      f"(+30% vs. plano)",
-            metric="revenue_growth_rate",
-            value=scenario_assumptions.revenue_growth_rate,
+            condition=receita_cond,
+            metric="proj_revenue_cagr",
+            value=cagr,
         ))
+
+        if base_margin is not None:
+            margin_delta_pp = (margin - base_margin) * 100
+            margem_cond = (
+                f"Margem EBITDA terminal expande para {margin*100:.1f}% "
+                f"({margin_delta_pp:+.1f}pp vs. Base) por ganhos de escala"
+            )
+        else:
+            margem_cond = f"Margem EBITDA terminal em {margin*100:.1f}% reflete ganhos de escala"
         items.append(WhatNeedsToBeTrueItem(
             category="Margem",
-            condition=f"Ganhos de escala: COGS cai para {scenario_assumptions.cogs_pct_revenue*100:.1f}% da receita",
-            metric="cogs_pct_revenue",
-            value=scenario_assumptions.cogs_pct_revenue,
+            condition=margem_cond,
+            metric="terminal_ebitda_margin",
+            value=margin,
         ))
+
         items.append(WhatNeedsToBeTrueItem(
             category="Operacional",
-            condition="Expansão acelerada de lojas próprias + marcas próprias ganham share",
+            condition="Expansão acelerada de lojas próprias e marcas próprias ganham share de carteira",
             metric="execution",
             value=1.3,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Mercado",
-            condition="Mercado óptico cresce acima do esperado, consolidação favorece líderes",
+            condition="Mercado cresce acima do projetado; consolidação favorece os líderes",
             metric="market",
             value=1.3,
         ))
@@ -264,8 +384,9 @@ def build_scenarios(
     cons.build_consolidated()
     engine.base.consolidated = cons.consolidated
     engine.base.what_needs_to_be_true = _generate_what_needs_to_be_true(
-        "Base", base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
-        base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
+        "Base",
+        scenario_consolidated=engine.base.consolidated,
+        base_consolidated=engine.base.consolidated,
     )
     engine.base.compute_metrics()
 
@@ -301,8 +422,8 @@ def build_scenarios(
     engine.pessimistic.consolidated = cons_p.consolidated
     engine.pessimistic.what_needs_to_be_true = _generate_what_needs_to_be_true(
         "Pessimista",
-        base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
-        pess_models[0].assumptions if pess_models else ModelAssumptions(),
+        scenario_consolidated=engine.pessimistic.consolidated,
+        base_consolidated=engine.base.consolidated,
     )
     engine.pessimistic.compute_metrics()
 
@@ -338,8 +459,8 @@ def build_scenarios(
     engine.optimistic.consolidated = cons_o.consolidated
     engine.optimistic.what_needs_to_be_true = _generate_what_needs_to_be_true(
         "Otimista",
-        base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
-        opt_models[0].assumptions if opt_models else ModelAssumptions(),
+        scenario_consolidated=engine.optimistic.consolidated,
+        base_consolidated=engine.base.consolidated,
     )
     engine.optimistic.compute_metrics()
 
