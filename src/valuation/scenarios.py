@@ -487,7 +487,8 @@ def run_full_valuation(
     wacc_inputs=None,
     ev_ebitda_multiple: float | None = None,
     ev_revenue_multiple: float | None = None,
-    stake_pct: float = 0.30,
+    stake_pct: float | None = None,
+    entry_equity_value: float | None = None,
     net_debt: float = 0,
     verbose: bool = False,
 ) -> dict:
@@ -498,7 +499,15 @@ def run_full_valuation(
         wacc_inputs: WACC parameters (auto-derived if None)
         ev_ebitda_multiple: EV/EBITDA multiple (uses extracted if None)
         ev_revenue_multiple: EV/Revenue multiple (uses extracted if None)
-        stake_pct: Target investor stake
+        stake_pct: Target investor stake. If None, parsed from the
+            dossier's transaction.target_stake_range; if that also fails,
+            defaults to 0.30. Pass a float (e.g., 0.35) to override.
+        entry_equity_value: Fixed total equity value (100% basis) used as
+            the investor's entry across ALL scenarios. If None, defaults
+            to the Base-case DCF perpetuity equity value — so the Base
+            represents the "fair price today" and Pessimista/Otimista
+            test downside/upside at the same ticket. Pass a float to
+            override (e.g., a negotiated price).
         net_debt: Net debt for equity bridge
         verbose: Print progress
     """
@@ -520,44 +529,76 @@ def run_full_valuation(
     if not wacc_inputs:
         wacc_inputs = WACCInputs()
 
-    # Extract stake from dossier
-    stake_range = dossier.transaction.target_stake_range.value
-    if stake_range and isinstance(stake_range, str):
-        import re
-        s = str(stake_range)
+    # ── Resolve stake_pct ─────────────────────────────────────
+    # Priority: explicit arg > parsed from dossier > fallback default
+    resolved_stake = None
+    if stake_pct is not None:
+        # Caller provided an override; use it directly (no parsing).
+        resolved_stake = stake_pct
+    else:
+        stake_range = dossier.transaction.target_stake_range.value
+        if stake_range and isinstance(stake_range, str):
+            import re
+            s = str(stake_range)
 
-        # The CIM typically says ">60% acionistas, <40% investidor"
-        # The investor stake is the one with "<" or "menor" or "minoritário"
-        # Strategy: look for <N% first (investor cap), then bare numbers
+            # The CIM typically says ">60% acionistas, <40% investidor"
+            # The investor stake is the one with "<" or "menor" or "minoritário"
 
-        # Pattern 1: explicit "<X%" — this is the investor's max stake
-        lt_match = re.search(r'<\s*(\d+)\s*%', s)
-        if lt_match:
-            parsed = int(lt_match.group(1)) / 100
-        else:
-            # Pattern 2: "até X%" or "up to X%"
-            ate_match = re.search(r'(?:até|up\s+to)\s+(\d+)\s*%', s, re.IGNORECASE)
-            if ate_match:
-                parsed = int(ate_match.group(1)) / 100
+            # Pattern 1: explicit "<X%" — this is the investor's max stake
+            lt_match = re.search(r'<\s*(\d+)\s*%', s)
+            if lt_match:
+                parsed = int(lt_match.group(1)) / 100
             else:
-                # Pattern 3: take the smallest number (likely investor stake)
-                nums = re.findall(r'(\d+)\s*%', s)
-                if nums:
-                    parsed = min(int(n) for n in nums) / 100
+                # Pattern 2: "até X%" or "up to X%"
+                ate_match = re.search(r'(?:até|up\s+to)\s+(\d+)\s*%', s, re.IGNORECASE)
+                if ate_match:
+                    parsed = int(ate_match.group(1)) / 100
                 else:
-                    parsed = stake_pct  # fallback to default
+                    # Pattern 3: take the smallest number (likely investor stake)
+                    nums = re.findall(r'(\d+)\s*%', s)
+                    if nums:
+                        parsed = min(int(n) for n in nums) / 100
+                    else:
+                        parsed = None
 
-        # Sanity check: investor stake should be 5%-50%
-        if 0.05 <= parsed <= 0.50:
-            stake_pct = parsed
-        elif parsed > 0.50:
-            # Likely picked up the majority holder's stake; use complement
-            complement = 1.0 - parsed
-            if 0.05 <= complement <= 0.50:
-                stake_pct = complement
+            if parsed is not None:
+                # Sanity check: investor stake should be 5%-50%
+                if 0.05 <= parsed <= 0.50:
+                    resolved_stake = parsed
+                elif parsed > 0.50:
+                    # Likely picked up the majority holder's stake; use complement
+                    complement = 1.0 - parsed
+                    if 0.05 <= complement <= 0.50:
+                        resolved_stake = complement
+
+    # Final fallback
+    stake_pct = resolved_stake if resolved_stake is not None else 0.30
 
     # Step 1: Build scenarios
     engine = build_scenarios(dossier, verbose=verbose)
+
+    # ── Resolve entry_equity_value ────────────────────────────
+    # If the caller didn't pass an explicit entry price, derive it from
+    # the BASE scenario's DCF. This gives us a single, consistent entry
+    # across all three scenarios — so the IRR actually measures downside
+    # vs upside (rather than "did you buy at fair value in each universe").
+    entry_source = "override" if entry_equity_value is not None else "base_dcf"
+    if entry_equity_value is None:
+        base_proj = [y for y in engine.base.consolidated if y.is_projected]
+        if not base_proj:
+            base_proj = engine.base.consolidated
+        base_dcf = run_dcf(
+            base_proj, wacc_inputs, terminal_method="perpetuity",
+            terminal_growth_rate=0.03, net_debt=net_debt, verbose=False,
+        )
+        entry_equity_value = base_dcf.bridge.equity_value
+        if entry_equity_value <= 0:
+            # Fallback: blended multiples-based equity if DCF degenerates
+            base_mult = run_multiples(
+                base_proj, ev_ebitda_multiple, ev_revenue_multiple,
+                net_debt=net_debt, verbose=False,
+            )
+            entry_equity_value = base_mult.equity_blended
 
     # Step 2: Run DCF + Multiples + IRR for each scenario
     if verbose:
@@ -566,6 +607,8 @@ def run_full_valuation(
               f"EV/EBITDA: {ev_ebitda_multiple}x  |  "
               f"EV/Revenue: {ev_revenue_multiple}x  |  "
               f"Stake: {stake_pct*100:.0f}%")
+        print(f"    Entry (100% equity, fixed across scenarios): "
+              f"{entry_equity_value:,.0f} [{entry_source}]")
 
     summaries = []
 
@@ -595,18 +638,18 @@ def run_full_valuation(
             net_debt=net_debt, verbose=verbose,
         )
 
-        # IRR: entry at DCF equity value (reflects all future cash flows
-        # including growth optionality like Lojas Próprias ramp-up),
-        # exit at terminal EBITDA × multiple
-        entry_eq = dcf_perp.bridge.equity_value
-        if entry_eq <= 0:
-            entry_eq = mult.equity_blended
-
+        # IRR: FIXED entry (Base-case equity or user override) — same ticket
+        # for all three scenarios. This lets the IRR actually compare
+        # downside (Pessimista) vs upside (Otimista) at a single negotiated
+        # price, instead of "buying at fair value in each parallel universe"
+        # which made the IRR collapse to WACC and decrease with growth.
         if verbose:
-            print(f"      Entry (DCF equity): {entry_eq:,.0f}")
+            print(f"      Entry (fixed, 100% equity): {entry_equity_value:,.0f}")
+            print(f"      Entry × stake ({stake_pct*100:.0f}%): "
+                  f"{entry_equity_value * stake_pct:,.0f}")
 
         irr = run_irr(
-            proj, entry_equity_value=entry_eq,
+            proj, entry_equity_value=entry_equity_value,
             stake_pct=stake_pct, exit_ev_ebitda=ev_ebitda_multiple,
             net_debt_at_exit=net_debt, verbose=verbose,
         )
@@ -644,6 +687,8 @@ def run_full_valuation(
             "ev_ebitda_multiple": ev_ebitda_multiple,
             "ev_revenue_multiple": ev_revenue_multiple,
             "stake_pct": stake_pct,
+            "entry_equity_value": entry_equity_value,
+            "entry_source": entry_source,
             "net_debt": net_debt,
         },
     }

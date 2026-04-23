@@ -48,6 +48,16 @@ def process(
     xlsx: bool = typer.Option(False, "--xlsx", help="Gerar planilha Excel (.xlsx)"),
     pptx: bool = typer.Option(False, "--pptx", help="Gerar apresentação PowerPoint (.pptx)"),
     valuation: bool = typer.Option(False, "--valuation", help="Executar modelo financeiro + cenários + DCF"),
+    entry_price: float = typer.Option(
+        None, "--entry-price",
+        help="Preço de entrada FIXO (equity 100%, em BRL k) usado nos 3 cenários para calcular IRR. "
+             "Se omitido, usa o DCF equity do caso Base como âncora."
+    ),
+    stake_pct_override: float = typer.Option(
+        None, "--stake-pct",
+        help="Override do stake do investidor (ex: 0.35 para 35%%). "
+             "Se omitido, usa o valor extraído do CIM ou 30%% como default."
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
 ):
     """Processa um CIM/PDF e gera o dossiê completo."""
@@ -106,13 +116,27 @@ def process(
     if valuation:
         from .valuation.scenarios import run_full_valuation
         import json as json_lib
-        val_result = run_full_valuation(dossier, verbose=verbose)
+        val_result = run_full_valuation(
+            dossier,
+            stake_pct=stake_pct_override,
+            entry_equity_value=entry_price,
+            verbose=verbose,
+        )
         val_path = f"data/outputs/valuation_{safe_name}.json"
         with open(val_path, "w", encoding="utf-8") as f:
             f.write(json_lib.dumps(val_result, ensure_ascii=False, indent=2, default=str))
         files_saved.append(("Valuation", val_path, "3 cenários × 4 métodos"))
 
         _print(f"\n  [bold]Valuation — Resumo[/bold]\n")
+        # Show entry price and stake so the reader knows what drives the IRR
+        val_inputs = val_result.get("inputs", {})
+        entry_val = val_inputs.get("entry_equity_value", 0) or 0
+        entry_src = val_inputs.get("entry_source", "")
+        stake_val = val_inputs.get("stake_pct", 0) or 0
+        _print(
+            f"  [dim]Entry (100% equity): BRL {entry_val:,.0f}k "
+            f"[{entry_src}]  |  Stake: {stake_val*100:.0f}%[/dim]\n"
+        )
         if console and HAS_RICH:
             from rich.table import Table as RichTable
             vt = RichTable(title="Valuation (EV em BRL k)")

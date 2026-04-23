@@ -42,6 +42,12 @@ try:
 except ImportError:
     HAS_COMPETITOR_PARSER = False
 
+try:
+    from ..parsers.profile_parser import extract_legal_name, extract_headquarters
+    HAS_PROFILE_PARSER = True
+except ImportError:
+    HAS_PROFILE_PARSER = False
+
 
 # ── Minimum thresholds for retry ──────────────────────────────
 MIN_TIMELINE_EVENTS = 5
@@ -226,6 +232,33 @@ def extract_company_llm(
 
     if verbose:
         print(f"  [LLM] Extracting company profile from {len(overview_pages)} pages...")
+
+    # ── Regex-first pass for deterministic fields ──
+    # Legal name is typically in the DISCLAIMER (page 2 in Frank-style CIMs,
+    # classified as "meta" and normally excluded from content_pages) and
+    # headquarters often appears on the entity-structure page near the end.
+    # So we scan ALL classified pages here, not just content_pages.
+    if HAS_PROFILE_PARSER:
+        for page in classified:
+            text = page.block.clean_text
+            pg = page.block.page_number
+
+            if profile.legal_name.is_empty:
+                ln = extract_legal_name(text)
+                if ln:
+                    profile.legal_name = _tracked(ln, source_file, pg, ln)
+                    if verbose:
+                        print(f"    📋 Regex found legal_name on page {pg}: {ln}")
+
+            if profile.headquarters.is_empty:
+                hq = extract_headquarters(text)
+                if hq:
+                    profile.headquarters = _tracked(hq, source_file, pg, hq)
+                    if verbose:
+                        print(f"    📋 Regex found headquarters on page {pg}: {hq}")
+
+            if not profile.legal_name.is_empty and not profile.headquarters.is_empty:
+                break
 
     for text, page_nums in chunks:
         system, prompt = prompts.prompt_company_profile(text)
