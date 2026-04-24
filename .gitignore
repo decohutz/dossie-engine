@@ -11,12 +11,6 @@ venv/
 data/inputs/*
 data/outputs/*
 data/versions/*
-data/inputs/
-data/outputs/
-data/versions/
-*.pdf
-*.xlsx
-*.pptx
 !data/inputs/.gitkeep
 !data/outputs/.gitkeep
 !data/versions/.gitkeep
@@ -33,6 +27,15 @@ data/versions/
 .DS_Store
 Thumbs.db
 
-# Test fixtures (keep only small samples)
-tests/fixtures/*.pdf
+# ──────────────────────────────────────────────────────────────
+# Confidential test fixtures — NEVER commit
+# Baselines contain real CIM data under NDA (financials, company
+# names, projections). Lives locally only; tests skip gracefully
+# when the fixture directory is absent.
+# ──────────────────────────────────────────────────────────────
+tests/fixtures/**
 !tests/fixtures/README.md
+!tests/fixtures/.gitkeep
+
+# Pytest cache
+.pytest_cache/
