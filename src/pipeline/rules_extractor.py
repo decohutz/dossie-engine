@@ -2,8 +2,24 @@
 Rule-based extraction (fallback).
 Contains the hardcoded extraction logic from v0.1.
 Used when LLM is not available.
+
+⚠️  CALIBRATION WARNING
+────────────────────────────────────────────────────────────────────
+The extraction rules in this module are calibrated exclusively for
+"Projeto Frank" (Grupo Mercadão dos Óculos) — they reference specific
+shareholder names, stake percentages, business descriptions, and
+market figures that belong to that single CIM. Running this extractor
+on any other CIM will produce misleading results (values that look
+plausible but describe the wrong company).
+
+Use the LLM-based pipeline (default) for any CIM other than Frank.
+Keep this fallback only for deterministic regression testing of the
+Frank pipeline when an LLM is unavailable.
+────────────────────────────────────────────────────────────────────
 """
 from __future__ import annotations
+import warnings
+
 from ..models.evidence import Evidence, TrackedField
 from ..models.company import (
     CompanyChapter, CompanyProfile, TimelineEvent,
@@ -13,6 +29,24 @@ from ..models.market import (
     MarketChapter, MarketSize, Competitor, TransactionChapter,
 )
 from ..pipeline.classifier import ClassifiedPage
+
+
+_CALIBRATION_WARNING = (
+    "rules_extractor is calibrated ONLY for the Projeto Frank CIM "
+    "(Grupo Mercadão dos Óculos). Values extracted by this fallback on "
+    "other CIMs will be incorrect. Use the LLM pipeline (default) instead."
+)
+
+
+def _warn_frank_only_once():
+    """Emit the calibration warning at most once per process."""
+    if getattr(_warn_frank_only_once, "_shown", False):
+        return
+    warnings.warn(_CALIBRATION_WARNING, RuntimeWarning, stacklevel=3)
+    # Also print to stderr so CLI users who don't filter warnings see it
+    import sys
+    print(f"\n  ⚠️  {_CALIBRATION_WARNING}\n", file=sys.stderr)
+    _warn_frank_only_once._shown = True
 
 
 def _evidence(source: str, page: int, excerpt: str = "", confidence: float = 0.85) -> Evidence:
@@ -27,6 +61,7 @@ def _tracked(value, source: str, page: int, excerpt: str = "") -> TrackedField:
 
 
 def extract_company_rules(classified: list[ClassifiedPage], source_file: str) -> CompanyChapter:
+    _warn_frank_only_once()
     chapter = CompanyChapter()
     profile = CompanyProfile()
     all_pages = [(p.block.page_number, p.block.clean_text, p.block.raw_text) for p in classified]
@@ -128,6 +163,7 @@ def extract_company_rules(classified: list[ClassifiedPage], source_file: str) ->
 
 
 def extract_market_rules(classified: list[ClassifiedPage], source_file: str) -> MarketChapter:
+    _warn_frank_only_once()
     chapter = MarketChapter()
     all_pages = [(p.block.page_number, p.block.clean_text, p.block.raw_text) for p in classified]
 
@@ -172,6 +208,7 @@ def extract_market_rules(classified: list[ClassifiedPage], source_file: str) -> 
 
 
 def extract_transaction_rules(classified: list[ClassifiedPage], source_file: str) -> TransactionChapter:
+    _warn_frank_only_once()
     chapter = TransactionChapter()
     for pg, text in [(p.block.page_number, p.block.clean_text) for p in classified]:
         text_lower = text.lower()

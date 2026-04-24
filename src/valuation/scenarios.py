@@ -512,17 +512,36 @@ def run_full_valuation(
     from .dcf import run_dcf, WACCInputs
     from .multiples import run_multiples, run_irr, build_valuation_summary
 
-    # Extract multiples from dossier if not provided
+    # Resolve multiples: explicit arg > extracted from CIM > None (with warning).
+    # Never silently fall back to sector-specific defaults — doing so would
+    # anchor the valuation of an arbitrary CIM to the optical-retail benchmarks
+    # this code was originally calibrated on.
     if ev_ebitda_multiple is None or ev_revenue_multiple is None:
         mult_data = dossier.market.global_multiples_median.value
         if isinstance(mult_data, dict):
             if ev_ebitda_multiple is None:
-                ev_ebitda_multiple = mult_data.get("ev_ebitda_median", 11.0)
+                ev_ebitda_multiple = mult_data.get("ev_ebitda_median")
             if ev_revenue_multiple is None:
-                ev_revenue_multiple = mult_data.get("ev_revenue_median", 1.8)
-        else:
-            ev_ebitda_multiple = ev_ebitda_multiple or 11.0
-            ev_revenue_multiple = ev_revenue_multiple or 1.8
+                ev_revenue_multiple = mult_data.get("ev_revenue_median")
+
+    missing = []
+    if ev_ebitda_multiple is None:
+        missing.append("EV/EBITDA")
+    if ev_revenue_multiple is None:
+        missing.append("EV/Revenue")
+    if missing:
+        import warnings, sys
+        msg = (
+            f"Múltiplos {' e '.join(missing)} não foram extraídos do CIM nem "
+            f"fornecidos explicitamente. Os métodos de valuation que dependem "
+            f"desses múltiplos (multiples comparables, exit multiple no DCF) "
+            f"serão reportados como None. Para forçar um múltiplo de referência, "
+            f"passe ev_ebitda_multiple/ev_revenue_multiple explicitamente ou "
+            f"garanta que dossier.market.global_multiples_median esteja preenchido."
+        )
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+        if verbose:
+            print(f"    ⚠️  {msg}", file=sys.stderr)
 
     if not wacc_inputs:
         wacc_inputs = WACCInputs()
@@ -591,19 +610,27 @@ def run_full_valuation(
         )
         entry_equity_value = base_dcf.bridge.equity_value
         if entry_equity_value <= 0:
-            # Fallback: blended multiples-based equity if DCF degenerates
-            base_mult = run_multiples(
-                base_proj, ev_ebitda_multiple, ev_revenue_multiple,
-                net_debt=net_debt, verbose=False,
-            )
-            entry_equity_value = base_mult.equity_blended
+            # Fallback: blended multiples-based equity if DCF degenerates.
+            # Only possible when both multiples are known; otherwise zero and
+            # let downstream IRR skip too.
+            if ev_ebitda_multiple is not None and ev_revenue_multiple is not None:
+                base_mult = run_multiples(
+                    base_proj, ev_ebitda_multiple, ev_revenue_multiple,
+                    net_debt=net_debt, verbose=False,
+                )
+                entry_equity_value = base_mult.equity_blended
+            else:
+                entry_equity_value = 0.0
+                entry_source = "degenerate"
 
     # Step 2: Run DCF + Multiples + IRR for each scenario
     if verbose:
         print(f"\n  [Valuation] Running DCF + Múltiplos + IRR...")
+        ebitda_str = f"{ev_ebitda_multiple}x" if ev_ebitda_multiple is not None else "N/A"
+        rev_str = f"{ev_revenue_multiple}x" if ev_revenue_multiple is not None else "N/A"
         print(f"    WACC: {wacc_inputs.wacc*100:.1f}%  |  "
-              f"EV/EBITDA: {ev_ebitda_multiple}x  |  "
-              f"EV/Revenue: {ev_revenue_multiple}x  |  "
+              f"EV/EBITDA: {ebitda_str}  |  "
+              f"EV/Revenue: {rev_str}  |  "
               f"Stake: {stake_pct*100:.0f}%")
         print(f"    Entry (100% equity, fixed across scenarios): "
               f"{entry_equity_value:,.0f} [{entry_source}]")
@@ -618,49 +645,61 @@ def run_full_valuation(
         if not proj:
             proj = scenario.consolidated
 
-        # DCF - Perpetuity
+        # DCF - Perpetuity (always runs — doesn't need multiples)
         dcf_perp = run_dcf(
             proj, wacc_inputs, terminal_method="perpetuity",
             terminal_growth_rate=0.03, net_debt=net_debt, verbose=verbose,
         )
 
-        # DCF - Exit Multiple
-        dcf_exit = run_dcf(
-            proj, wacc_inputs, terminal_method="exit_multiple",
-            exit_multiple=ev_ebitda_multiple, net_debt=net_debt, verbose=False,
-        )
+        # DCF - Exit Multiple (only if EV/EBITDA is known)
+        dcf_exit_ev = 0.0
+        if ev_ebitda_multiple is not None:
+            dcf_exit = run_dcf(
+                proj, wacc_inputs, terminal_method="exit_multiple",
+                exit_multiple=ev_ebitda_multiple, net_debt=net_debt, verbose=False,
+            )
+            dcf_exit_ev = dcf_exit.enterprise_value
 
-        # Multiples (terminal year — for EV range)
-        mult = run_multiples(
-            proj, ev_ebitda_multiple, ev_revenue_multiple,
-            net_debt=net_debt, verbose=verbose,
-        )
+        # Multiples (only if BOTH multiples are known)
+        mult_ebitda_ev = 0.0
+        mult_rev_ev = 0.0
+        if ev_ebitda_multiple is not None and ev_revenue_multiple is not None:
+            mult = run_multiples(
+                proj, ev_ebitda_multiple, ev_revenue_multiple,
+                net_debt=net_debt, verbose=verbose,
+            )
+            mult_ebitda_ev = mult.ev_by_ebitda
+            mult_rev_ev = mult.ev_by_revenue
 
         # IRR: FIXED entry (Base-case equity or user override) — same ticket
-        # for all three scenarios. This lets the IRR actually compare
-        # downside (Pessimista) vs upside (Otimista) at a single negotiated
-        # price, instead of "buying at fair value in each parallel universe"
-        # which made the IRR collapse to WACC and decrease with growth.
+        # for all three scenarios. Requires EV/EBITDA for exit proceeds.
         if verbose:
             print(f"      Entry (fixed, 100% equity): {entry_equity_value:,.0f}")
             print(f"      Entry × stake ({stake_pct*100:.0f}%): "
                   f"{entry_equity_value * stake_pct:,.0f}")
 
-        irr = run_irr(
-            proj, entry_equity_value=entry_equity_value,
-            stake_pct=stake_pct, exit_ev_ebitda=ev_ebitda_multiple,
-            net_debt_at_exit=net_debt, verbose=verbose,
-        )
+        irr_val = 0.0
+        moic_val = 0.0
+        if ev_ebitda_multiple is not None:
+            irr = run_irr(
+                proj, entry_equity_value=entry_equity_value,
+                stake_pct=stake_pct, exit_ev_ebitda=ev_ebitda_multiple,
+                net_debt_at_exit=net_debt, verbose=verbose,
+            )
+            irr_val = irr.irr
+            moic_val = irr.moic
+        elif verbose:
+            print(f"      ⏭️  IRR/MOIC puladas (EV/EBITDA ausente)")
 
         summary = build_valuation_summary(
             scenario.name,
             dcf_perp_ev=dcf_perp.enterprise_value,
-            dcf_exit_ev=dcf_exit.enterprise_value,
-            mult_ebitda_ev=mult.ev_by_ebitda,
-            mult_rev_ev=mult.ev_by_revenue,
+            dcf_exit_ev=dcf_exit_ev,
+            mult_ebitda_ev=mult_ebitda_ev,
+            mult_rev_ev=mult_rev_ev,
             net_debt=net_debt,
-            irr=irr.irr,
-            moic=irr.moic,
+            irr=irr_val,
+            moic=moic_val,
         )
         summaries.append(summary)
 
