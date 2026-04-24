@@ -438,11 +438,7 @@ def _slide_dre(prs, dossier: Dossier):
 
     # Try to get DRE data from the first available entity
     fin = dossier.financials
-    stmts = [
-        ("Franqueadora", fin.dre_franqueadora),
-        ("Distribuidora", fin.dre_distribuidora),
-        ("Lojas Próprias", fin.dre_lojas_proprias),
-    ]
+    stmts = [(e.name, e.dre) for e in fin.entities]
 
     available = [(name, stmt) for name, stmt in stmts if stmt and stmt.lines]
 
@@ -547,11 +543,7 @@ def _slide_balance(prs, dossier: Dossier):
     _header(slide, "Balanço patrimonial")
 
     fin = dossier.financials
-    stmts = [
-        ("Franqueadora", fin.balance_franqueadora),
-        ("Distribuidora", fin.balance_distribuidora),
-        ("Lojas Próprias", fin.balance_lojas_proprias),
-    ]
+    stmts = [(e.name, e.balance_sheet) for e in fin.entities]
 
     available = [(name, stmt) for name, stmt in stmts if stmt and stmt.lines]
 

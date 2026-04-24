@@ -357,11 +357,9 @@ def build_scenarios(
     engine = ScenarioEngine()
     fin = dossier.financials
 
-    entities = [
-        ("Franqueadora", fin.dre_franqueadora),
-        ("Distribuidora", fin.dre_distribuidora),
-        ("Lojas Próprias", fin.dre_lojas_proprias),
-    ]
+    # Discover entities dynamically from the financial chapter. Each entity
+    # contributes a DRE (when available) to the consolidated projection.
+    entities = [(e.name, e.dre) for e in fin.entities]
 
     # ── BASE SCENARIO (CIM projections as-is) ────────────────
     base_models = []

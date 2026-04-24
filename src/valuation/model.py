@@ -523,11 +523,7 @@ def build_model_from_dossier(
         print("  [Valuation] Building financial model...")
 
     fin = dossier.financials
-    entities = [
-        ("Franqueadora", fin.dre_franqueadora),
-        ("Distribuidora", fin.dre_distribuidora),
-        ("Lojas Próprias", fin.dre_lojas_proprias),
-    ]
+    entities = [(e.name, e.dre) for e in fin.entities]
 
     consolidated = ConsolidatedModel()
 

@@ -149,11 +149,25 @@ def _count_summary(data: dict) -> dict[str, int]:
     financials = data.get("financials", {})
     market = data.get("market", {})
 
-    fin_count = sum(
-        1 for key in financials
-        if key.startswith(("dre_", "balance_")) and financials.get(key) is not None
-        and isinstance(financials[key], dict) and financials[key].get("lines")
-    )
+    # Count financial statements — handle both the new schema (entities list)
+    # and the legacy flat schema (dre_franqueadora / balance_franqueadora / ...)
+    # so `diff` still works against pre-refactor saved versions.
+    fin_count = 0
+    entities = financials.get("entities")
+    if isinstance(entities, list):
+        for ent in entities:
+            if not isinstance(ent, dict):
+                continue
+            for key in ("dre", "balance_sheet"):
+                stmt = ent.get(key)
+                if isinstance(stmt, dict) and stmt.get("lines"):
+                    fin_count += 1
+    else:
+        fin_count = sum(
+            1 for key in financials
+            if key.startswith(("dre_", "balance_")) and financials.get(key) is not None
+            and isinstance(financials[key], dict) and financials[key].get("lines")
+        )
 
     return {
         "executives": len(company.get("executives", [])),

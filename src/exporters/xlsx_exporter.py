@@ -607,26 +607,22 @@ def export_xlsx(dossier: Dossier, output_path: str, valuation_data: dict | None 
     ws_overview.title = "Visão Geral"
     _write_overview_sheet(ws_overview, dossier)
 
-    # Sheet 2-4: DREs
+    # Sheets 2-N: one DRE sheet per entity, in discovery order
     fin = dossier.financials
-    dre_sheets = [
-        ("DRE Franqueadora", fin.dre_franqueadora),
-        ("DRE Distribuidora", fin.dre_distribuidora),
-        ("DRE Lojas Próprias", fin.dre_lojas_proprias),
-    ]
-    for title, stmt in dre_sheets:
-        ws = wb.create_sheet(title=title)
-        _write_financial_sheet(ws, stmt, title)
+    for entity in fin.entities:
+        if entity.dre is None:
+            continue
+        title = f"DRE {entity.name}"
+        ws = wb.create_sheet(title=title[:31])  # Excel caps sheet names at 31 chars
+        _write_financial_sheet(ws, entity.dre, title)
 
-    # Sheet 5-7: Balance Sheets
-    bal_sheets = [
-        ("Balanço Franqueadora", fin.balance_franqueadora),
-        ("Balanço Distribuidora", fin.balance_distribuidora),
-        ("Balanço Lojas Próprias", fin.balance_lojas_proprias),
-    ]
-    for title, stmt in bal_sheets:
-        ws = wb.create_sheet(title=title)
-        _write_financial_sheet(ws, stmt, title)
+    # Balance-sheet sheets, one per entity (skipped if balance_sheet is None)
+    for entity in fin.entities:
+        if entity.balance_sheet is None:
+            continue
+        title = f"Balanço {entity.name}"
+        ws = wb.create_sheet(title=title[:31])
+        _write_financial_sheet(ws, entity.balance_sheet, title)
 
     # Sheet 8: Market
     ws_market = wb.create_sheet(title="Mercado")

@@ -79,39 +79,103 @@ class FinancialMetrics:
 
 
 @dataclass
+class FinancialEntity:
+    """A single entity within the group (subsidiary, segment, or business unit),
+    grouping its DRE and Balance Sheet together.
+
+    Examples:
+        FinancialEntity(name="Franqueadora", dre=<stmt>, balance_sheet=<stmt>)
+        FinancialEntity(name="SaaS Co", dre=<stmt>)  # no balance sheet available
+    """
+    name: str
+    dre: FinancialStatement | None = None
+    balance_sheet: FinancialStatement | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "dre": self.dre.to_dict() if self.dre else None,
+            "balance_sheet": self.balance_sheet.to_dict() if self.balance_sheet else None,
+        }
+
+
+@dataclass
 class FinancialChapter:
-    """All financial data for the dossier."""
-    # Individual DREs
+    """All financial data for the dossier.
+
+    Entities are discovered dynamically from the source document (one per
+    subsidiary / segment / business unit). The chapter supports 1 or N
+    entities — a SaaS company with a single P&L produces 1 entity, while a
+    holding with 5 subsidiaries produces 5.
+    """
+    entities: list[FinancialEntity] = field(default_factory=list)
+
+    # Consolidated view (from the CIM itself, if provided)
     dre_consolidated: FinancialStatement | None = None
-    dre_franqueadora: FinancialStatement | None = None
-    dre_distribuidora: FinancialStatement | None = None
-    dre_lojas_proprias: FinancialStatement | None = None
-    
-    # Individual Balance Sheets
-    balance_franqueadora: FinancialStatement | None = None
-    balance_distribuidora: FinancialStatement | None = None
-    balance_lojas_proprias: FinancialStatement | None = None
-    
+
     # Derived
     metrics: FinancialMetrics = field(default_factory=FinancialMetrics)
     capex_projection: TrackedField = field(default_factory=TrackedField.empty)
     dividend_projection: TrackedField = field(default_factory=TrackedField.empty)
 
+    # ── Lookup / upsert helpers ───────────────────────────────────────
+    def get_entity(self, name: str) -> FinancialEntity | None:
+        """Find an entity by name (case-insensitive, accent-insensitive)."""
+        target = _normalize(name)
+        for e in self.entities:
+            if _normalize(e.name) == target:
+                return e
+        return None
+
+    def _get_or_create_entity(self, name: str) -> FinancialEntity:
+        """Get existing entity by name or create and append a new one."""
+        existing = self.get_entity(name)
+        if existing is not None:
+            return existing
+        entity = FinancialEntity(name=name)
+        self.entities.append(entity)
+        return entity
+
+    def upsert_dre(self, entity_name: str, stmt: FinancialStatement) -> None:
+        """Attach a DRE to the given entity, creating the entity if needed."""
+        self._get_or_create_entity(entity_name).dre = stmt
+
+    def upsert_balance(self, entity_name: str, stmt: FinancialStatement) -> None:
+        """Attach a balance sheet to the given entity, creating the entity if needed."""
+        self._get_or_create_entity(entity_name).balance_sheet = stmt
+
+    # ── Bulk accessors ────────────────────────────────────────────────
+    @property
+    def all_dres(self) -> list[FinancialStatement]:
+        """Return all non-None DREs, in entity discovery order."""
+        return [e.dre for e in self.entities if e.dre is not None]
+
+    @property
+    def all_balances(self) -> list[FinancialStatement]:
+        """Return all non-None balance sheets, in entity discovery order."""
+        return [e.balance_sheet for e in self.entities if e.balance_sheet is not None]
+
     def all_statements(self) -> list[FinancialStatement]:
-        """Return all non-None statements."""
-        return [s for s in [
-            self.dre_franqueadora, self.dre_distribuidora, self.dre_lojas_proprias,
-            self.balance_franqueadora, self.balance_distribuidora, self.balance_lojas_proprias,
-        ] if s is not None]
+        """Return all non-None statements (DREs first, then balance sheets)."""
+        return self.all_dres + self.all_balances
 
     def to_dict(self) -> dict:
-        result = {}
-        for name in ["dre_consolidated", "dre_franqueadora", "dre_distribuidora", 
-                      "dre_lojas_proprias", "balance_franqueadora", "balance_distribuidora",
-                      "balance_lojas_proprias"]:
-            val = getattr(self, name)
-            result[name] = val.to_dict() if val else None
-        result["metrics"] = self.metrics.to_dict()
-        result["capex_projection"] = self.capex_projection.to_dict()
-        result["dividend_projection"] = self.dividend_projection.to_dict()
-        return result
+        return {
+            "entities": [e.to_dict() for e in self.entities],
+            "dre_consolidated": self.dre_consolidated.to_dict() if self.dre_consolidated else None,
+            "metrics": self.metrics.to_dict(),
+            "capex_projection": self.capex_projection.to_dict(),
+            "dividend_projection": self.dividend_projection.to_dict(),
+        }
+
+
+def _normalize(s: str) -> str:
+    """Case-insensitive, accent-insensitive string compare key.
+
+    Used for entity name matching so 'Lojas Próprias', 'lojas proprias',
+    and 'LOJAS PRÓPRIAS' all resolve to the same entity.
+    """
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", s or "")
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return stripped.strip().lower()

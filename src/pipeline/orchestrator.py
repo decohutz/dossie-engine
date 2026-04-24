@@ -4,6 +4,7 @@ Runs the full pipeline: parse → classify → extract (LLM or rules) → gaps �
 """
 from __future__ import annotations
 import os
+import re
 from datetime import datetime
 
 from ..models.dossier import Dossier, DossierMetadata
@@ -23,40 +24,74 @@ def _evidence(source: str, page: int, excerpt: str = "", confidence: float = 0.8
     )
 
 
+_DRE_HEADING_RE = re.compile(
+    r"demonstra[cç][aã]o\s+de\s+resultados\s*[–\-—:]\s*(.+)",
+    re.IGNORECASE,
+)
+_BALANCE_HEADING_RE = re.compile(
+    r"balan[cç]o\s+patrimonial\s*[–\-—:]\s*(.+)",
+    re.IGNORECASE,
+)
+
+
+def _parse_financial_heading(heading: str) -> tuple[str, str] | None:
+    """Parse a financial-table heading into (statement_type, entity_name).
+
+    Recognizes patterns like:
+      "Demonstração de Resultados – Franqueadora" → ("dre", "Franqueadora")
+      "Balanço Patrimonial – Distribuidora"       → ("balance_sheet", "Distribuidora")
+
+    Returns None if the heading doesn't look like a per-entity financial table.
+    """
+    if not heading:
+        return None
+    h = heading.strip()
+    m = _DRE_HEADING_RE.search(h)
+    if m:
+        stmt_type = "dre"
+    else:
+        m = _BALANCE_HEADING_RE.search(h)
+        if not m:
+            return None
+        stmt_type = "balance_sheet"
+
+    entity = m.group(1).strip()
+    # Trim trailing parentheticals / footnotes / notes
+    entity = re.sub(r"\s*[\(\[].*$", "", entity).strip()
+    # Strip trailing punctuation
+    entity = entity.rstrip(" .,;:")
+    if not entity:
+        return None
+    return stmt_type, entity
+
+
 def _extract_financials(
     classified: list[ClassifiedPage], source_file: str,
 ) -> FinancialChapter:
     """Extract financial statements from financial_table pages.
-    This always uses the text parser (not LLM) since it's more reliable for tables.
+
+    Entities are discovered dynamically from each page's heading — e.g. a
+    heading "Demonstração de Resultados – Distribuidora" creates an entity
+    named "Distribuidora" with a DRE attached. This handles CIMs with any
+    number of entities (1, 3, 5, ...) without hardcoding.
     """
     chapter = FinancialChapter()
     fin_pages = [p for p in classified if p.block.page_type == "financial_table"]
 
-    mapping = {
-        "dre_franqueadora": ("Franqueadora", "dre"),
-        "dre_distribuidora": ("Distribuidora", "dre"),
-        "dre_lojas_proprias": ("Lojas Próprias", "dre"),
-        "balance_franqueadora": ("Franqueadora", "balance_sheet"),
-        "balance_distribuidora": ("Distribuidora", "balance_sheet"),
-        "balance_lojas_proprias": ("Lojas Próprias", "balance_sheet"),
-    }
-
     for page in fin_pages:
-        heading = page.block.first_heading.lower()
-        for attr_name, (entity, stmt_type) in mapping.items():
-            type_match = (
-                ("demonstração" in heading and stmt_type == "dre")
-                or ("balanço" in heading and stmt_type == "balance_sheet")
-            )
-            entity_match = entity.lower().replace("ó", "o") in heading.replace("ó", "o")
-            if type_match and entity_match:
-                stmt = parse_financial_text(
-                    text=page.block.raw_text, entity_name=entity,
-                    statement_type=stmt_type, source_file=source_file,
-                    page=page.block.page_number,
-                )
-                setattr(chapter, attr_name, stmt)
-                break
+        parsed = _parse_financial_heading(page.block.first_heading)
+        if parsed is None:
+            continue
+        stmt_type, entity_name = parsed
+        stmt = parse_financial_text(
+            text=page.block.raw_text, entity_name=entity_name,
+            statement_type=stmt_type, source_file=source_file,
+            page=page.block.page_number,
+        )
+        if stmt_type == "dre":
+            chapter.upsert_dre(entity_name, stmt)
+        else:
+            chapter.upsert_balance(entity_name, stmt)
 
     return chapter
 
@@ -211,15 +246,17 @@ def _analyze_gaps(dossier: Dossier) -> list[Gap]:
         gaps.append(Gap("company", "company.products", "important", "Produtos não extraídos"))
 
     fin = dossier.financials
-    for name, label in [
-        ("dre_franqueadora", "DRE Franqueadora"),
-        ("dre_distribuidora", "DRE Distribuidora"),
-        ("balance_franqueadora", "Balanço Franqueadora"),
-        ("balance_distribuidora", "Balanço Distribuidora"),
-    ]:
-        stmt = getattr(fin, name)
-        if stmt is None or not stmt.lines:
-            gaps.append(Gap("financials", f"financials.{name}", "critical", f"{label} não extraído"))
+    # Report a gap for every entity that's missing a DRE or balance sheet.
+    # For the Frank CIM (Franqueadora/Distribuidora/Lojas Próprias) both DRE
+    # and balance sheet are expected for each entity. For other CIMs, whatever
+    # entities were discovered get checked individually.
+    for ent in fin.entities:
+        if ent.dre is None or not ent.dre.lines:
+            gaps.append(Gap("financials", f"financials.entities[{ent.name}].dre",
+                            "critical", f"DRE {ent.name} não extraído"))
+        if ent.balance_sheet is None or not ent.balance_sheet.lines:
+            gaps.append(Gap("financials", f"financials.entities[{ent.name}].balance_sheet",
+                            "critical", f"Balanço {ent.name} não extraído"))
 
     if not dossier.market.market_sizes:
         gaps.append(Gap("market", "market.market_sizes", "important", "Tamanho de mercado não extraído"))

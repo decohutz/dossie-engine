@@ -23,12 +23,11 @@ class ClassifiedPage:
 # Keyword rules: (chapter, sub_chapter, keywords_in_text)
 _RULES: list[tuple[str, str, list[str]]] = [
     # --- FINANCIAL ---
-    ("financials", "dre_franqueadora",     ["Demonstração de Resultados", "Franqueadora", "Receita Bruta"]),
-    ("financials", "dre_distribuidora",    ["Demonstração de Resultados", "Distribuidora"]),
-    ("financials", "dre_lojas_proprias",   ["Demonstração de Resultados", "Lojas Próprias"]),
-    ("financials", "balance_franqueadora", ["Balanço Patrimonial", "Franqueadora"]),
-    ("financials", "balance_distribuidora",["Balanço Patrimonial", "Distribuidora"]),
-    ("financials", "balance_lojas_proprias",["Balanço Patrimonial", "Lojas Próprias"]),
+    # Per-entity DREs and balance sheets are discovered dynamically by the
+    # orchestrator from each page's heading; these generic rules just give
+    # those pages a "financials" classification for downstream consumers.
+    ("financials", "dre",                  ["Demonstração de Resultados"]),
+    ("financials", "balance_sheet",        ["Balanço Patrimonial"]),
     ("financials", "revenue_breakdown",    ["Receita Bruta", "Receita Líquida", "EBITDA", "Lucro"]),
     ("financials", "structure",            ["informações financeiras", "veículos societários", "CNPJs"]),
     ("financials", "projections",          ["CAPEX", "Dividendos", "asset-light", "desalavancagem"]),
