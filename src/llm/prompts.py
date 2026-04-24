@@ -205,10 +205,26 @@ TEXTO:
 def prompt_transaction(text: str) -> tuple[str, str]:
     return SYSTEM_EXTRACTION, f"""Extraia as informações sobre a transação/deal mencionadas no texto abaixo.
 
+ATENÇÃO sobre target_stake_range:
+- É a participação que o NOVO INVESTIDOR vai adquirir, NUNCA a dos acionistas atuais
+- Em diagramas de cap table pós-transação, você tipicamente vê DOIS percentuais
+  lado a lado — um dos "Acionistas Atuais / Fundadores / Sponsors" e outro do
+  "Novo Investidor / Buyer / Incoming Partner". Use APENAS o do novo investidor.
+- Exemplos ilustrativos (valores fictícios):
+  * Diagrama: "Acionistas Atuais: >65% | Novo Investidor: <35%"
+    → target_stake_range: "<35%"           (não "<35% >65%", não ">65%")
+  * Diagrama: "Fundadores 70% / Buyer 30%"
+    → target_stake_range: "30%"            (não "70% 30%", não "70%")
+  * Texto: "aquisição de 100% das ações pela Compradora"
+    → target_stake_range: "100%"
+- Se só aparecer um lado explicitamente, use o valor como está.
+- NUNCA concatene os dois percentuais. NUNCA use o lado dos acionistas existentes.
+- Se o texto não mencionar a participação do investidor entrante, use null.
+
 Retorne JSON no formato:
 {{
   "transaction_type": "tipo da transação (ex: investimento minoritário) ou null",
-  "target_stake_range": "faixa de participação buscada (ex: <40%) ou null",
+  "target_stake_range": "faixa do NOVO INVESTIDOR (ex: <40%, 30%, 100%) ou null",
   "advisor": "nome do assessor financeiro ou null",
   "context": "contexto e objetivo da transação (1-2 frases) ou null",
   "perimeter": "o que está incluído na transação ou null",
