@@ -86,16 +86,25 @@ class FinancialEntity:
     Examples:
         FinancialEntity(name="Franqueadora", dre=<stmt>, balance_sheet=<stmt>)
         FinancialEntity(name="SaaS Co", dre=<stmt>)  # no balance sheet available
+        FinancialEntity(name="CSC", dre=<stmt>, non_operating=True)  # shared services overhead
+
+    The `non_operating` flag marks entities that are reported separately in
+    the source CIM but should not be valued as standalone operating units —
+    typical examples are CSCs (shared services centers), holding-company
+    overhead, or eliminations. They appear in the dossier (for transparency)
+    but valuation/multiples calculations are expected to skip them.
     """
     name: str
     dre: FinancialStatement | None = None
     balance_sheet: FinancialStatement | None = None
+    non_operating: bool = False
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "dre": self.dre.to_dict() if self.dre else None,
             "balance_sheet": self.balance_sheet.to_dict() if self.balance_sheet else None,
+            "non_operating": self.non_operating,
         }
 
 
