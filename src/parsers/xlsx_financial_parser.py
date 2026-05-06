@@ -115,22 +115,50 @@ _RATIO_LABEL_TOKENS = (
     "crescimento yoy",
     "variacao ipca",
     "variacao igpm",
+    "variacao inpc",
     "margem bruta",
     "margem ebitda",
     "margem liquida",
+    "margem ebit",
     "margem contribuicao",
     "% rl",
     "% rb",
     "% receita",
+    "% da receita",
+    "% do ebt",
+    "% da rl",
     "anal. vertical",
     "analise vertical",
+    "aliquota",
+    "taxa de crescimento",
+    "taxa efetiva",
 )
 
 # Cells we never treat as line labels.
 _NOISE_LABEL_TOKENS = (
     "ref",
     "suporte",
+    "support",
     "x",                         # Regenera puts an "x" in col B as a check mark
+    "check",
+    "verificacao",               # checksum row
+)
+
+# Once any of these labels is seen alone in the label column, the parser
+# stops reading rows for the current statement. Brazilian financial packs
+# often append a "Premissas" / "Notas" / "Drivers" section beneath the
+# DRE proper, listing inputs (number of employees, average salary, etc.)
+# that shouldn't be confused with line items. The XLSX parser previously
+# read past this divider and surfaced rows like "Salário Médio ($)" or
+# "Comissão por novo contrato ($)" as DRE lines, which polluted the
+# dossier output and (for ratio-shaped values) inflated derived metrics.
+_BLOCK_TERMINATOR_TOKENS = (
+    "premissas",
+    "notas",
+    "drivers",
+    "assumptions",
+    "memoria de calculo",
+    "memo de calculo",
 )
 
 
@@ -343,6 +371,13 @@ def _parse_statement_sheet(
         label = str(label_cell).strip()
         if not label or _is_noise_label(label):
             continue
+
+        # If we hit a section divider like "Premissas" / "Notas" / "Drivers"
+        # alone in the label column, stop reading. Anything below is
+        # assumption metadata (rates, headcounts, % drivers), not DRE.
+        if _is_block_terminator(label):
+            break
+
         if _is_ratio_label(label):
             continue
 
@@ -616,6 +651,23 @@ def _is_ratio_label(label: str) -> bool:
 def _is_noise_label(label: str) -> bool:
     norm = _normalize_text(label).strip()
     return norm in _NOISE_LABEL_TOKENS
+
+
+def _is_block_terminator(label: str) -> bool:
+    """Whether this label marks the end of the DRE block proper.
+
+    Brazilian financial packs typically append a 'Premissas' or 'Drivers'
+    section listing assumption inputs (% rates, headcounts, salaries)
+    beneath the DRE proper. We stop reading at the first such marker —
+    everything below is metadata, not line items.
+
+    Match is exact-after-normalization to avoid false positives: a line
+    item like 'Premissas — CMV' (with extra qualifier) shouldn't trigger;
+    only a bare 'Premissas' / 'Notas' / 'Drivers' acting as a section
+    header does.
+    """
+    norm = _normalize_text(label).strip()
+    return norm in _BLOCK_TERMINATOR_TOKENS
 
 
 def _looks_like_ratio_row(values: dict[str, float]) -> bool:

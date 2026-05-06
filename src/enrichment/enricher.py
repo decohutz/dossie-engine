@@ -11,6 +11,9 @@ from .sources import (
     search_jusbrasil,
     search_company_info,
     search_google_reviews,
+    search_market_size,
+    search_competitors,
+    search_sector_multiples,
 )
 
 
@@ -79,6 +82,15 @@ def enrich_dossier(
 
     # --- COMPANY INFO (legal name, HQ, employees) ---
     _enrich_company_info(dossier, company_name, client, verbose)
+
+    # --- MARKET (size, CAGR) ---
+    _enrich_market(dossier, company_name, client, verbose)
+
+    # --- COMPETITORS ---
+    _enrich_competitors(dossier, company_name, client, verbose)
+
+    # --- SECTOR MULTIPLES (EV/EBITDA, EV/Revenue) ---
+    _enrich_multiples(dossier, client, verbose)
 
     # Update gaps: remove filled ones, update remaining
     _update_gaps(dossier, verbose)
@@ -265,6 +277,285 @@ DADOS:
                     print(f"    ✅ Funcionários: {data['number_of_employees']}")
 
 
+def _enrich_market(
+    dossier: Dossier, company_name: str,
+    client: OllamaClient | None, verbose: bool,
+):
+    """Enrich market-size data when the dossier didn't extract any.
+
+    We use the company's sector as the primary search anchor — sector-
+    level queries return better TAM-shaped snippets than company-name
+    queries. Skip silently when no sector is known: searching for a
+    market without a sector tag would just return generic "Brazilian
+    economy" snippets that aren't useful.
+    """
+    market = dossier.market
+    if market.market_sizes:
+        return  # already populated by PDF extractor
+
+    sector = (dossier.company.profile.sector.value or "").strip()
+    if not sector:
+        if verbose:
+            print(f"\n  [Web] Mercado: pulando (setor não identificado)")
+        return
+
+    if verbose:
+        print(f"\n  [Web] Buscando tamanho de mercado...")
+
+    data = search_market_size(sector, geography="Brasil", verbose=verbose)
+    if not data:
+        if verbose:
+            print("    ❌ Nenhum dado de mercado encontrado")
+        return
+
+    if not client:
+        if verbose:
+            print("    ⚠️  Sem LLM: dados brutos descartados (mercado precisa de extração estruturada)")
+        return
+
+    prompt = f"""Extraia tamanho de mercado do setor "{sector}" a partir dos dados de pesquisa abaixo.
+
+Retorne JSON no formato:
+{{
+  "market_sizes": [
+    {{"geography": "Brasil", "value": 12.5, "unit": "BRL Bn", "year": 2024, "cagr": 0.08}},
+    {{"geography": "Global", "value": 200.0, "unit": "USD Bn", "year": 2024, "cagr": 0.05}}
+  ],
+  "summary": "1-2 frases sobre o mercado e drivers"
+}}
+
+Inclua apenas entradas onde valor numérico está presente nos snippets. NUNCA invente valores.
+Se nenhum tamanho for confiável, retorne {{"market_sizes": [], "summary": "..."}}.
+
+DADOS:
+{data['text'][:4000]}"""
+
+    parsed = client.extract_json(prompt, SYSTEM_ENRICH)
+    if not parsed or not isinstance(parsed, dict):
+        if verbose:
+            print("    ⚠️  LLM falhou em extrair mercado")
+        return
+
+    sizes = parsed.get("market_sizes") or []
+    if not sizes:
+        if verbose:
+            print(f"    ❌ Mercado: {parsed.get('summary', 'sem dados extraíveis')}")
+        return
+
+    from ..models.market import MarketSize
+    ev = _evidence("web_search:market", data.get("url", ""), confidence=0.5)
+    for s in sizes:
+        if not isinstance(s, dict):
+            continue
+        try:
+            value = float(s.get("value") or 0)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0:
+            continue
+        try:
+            year = int(s.get("year") or 0)
+        except (TypeError, ValueError):
+            year = 0
+        cagr = s.get("cagr")
+        try:
+            cagr = float(cagr) if cagr is not None else None
+        except (TypeError, ValueError):
+            cagr = None
+        market.market_sizes.append(MarketSize(
+            geography=str(s.get("geography") or ""),
+            value=value,
+            unit=str(s.get("unit") or "BRL Bn"),
+            year=year,
+            cagr=cagr,
+            evidence=ev,
+        ))
+
+    if verbose:
+        print(f"    ✅ Mercado: {len(sizes)} entrada(s) extraída(s) — {parsed.get('summary', '')}")
+
+
+def _enrich_competitors(
+    dossier: Dossier, company_name: str,
+    client: OllamaClient | None, verbose: bool,
+):
+    """Enrich the competitor list when the dossier didn't extract any."""
+    market = dossier.market
+    if market.competitors:
+        return  # already populated
+
+    sector = (dossier.company.profile.sector.value or "").strip()
+
+    if verbose:
+        print(f"\n  [Web] Buscando concorrentes...")
+
+    data = search_competitors(company_name, sector, verbose=verbose)
+    if not data:
+        if verbose:
+            print("    ❌ Nenhum concorrente encontrado")
+        return
+
+    if not client:
+        if verbose:
+            print("    ⚠️  Sem LLM: dados brutos descartados")
+        return
+
+    prompt = f"""Extraia uma lista de concorrentes da empresa "{company_name}" (setor: {sector}) a partir dos dados de pesquisa abaixo.
+
+Retorne JSON no formato:
+{{
+  "competitors": [
+    {{"name": "Nome Concorrente 1", "stores": 100, "revenue": 500.0, "revenue_unit": "BRL MM", "investor": "ABC Capital"}},
+    {{"name": "Nome Concorrente 2", "stores": null, "revenue": null, "revenue_unit": null, "investor": null}}
+  ]
+}}
+
+Regras:
+- Inclua apenas concorrentes claramente nomeados nos snippets, NÃO invente nomes.
+- Use null para campos não identificados.
+- NÃO inclua a própria "{company_name}" na lista.
+- Limite a 8 concorrentes mais relevantes.
+
+DADOS:
+{data['text'][:4000]}"""
+
+    parsed = client.extract_json(prompt, SYSTEM_ENRICH)
+    if not parsed or not isinstance(parsed, dict):
+        if verbose:
+            print("    ⚠️  LLM falhou em extrair concorrentes")
+        return
+
+    comps = parsed.get("competitors") or []
+    if not comps:
+        if verbose:
+            print("    ❌ Concorrentes: lista vazia")
+        return
+
+    from ..models.market import Competitor
+    ev = _evidence("web_search:competitors", data.get("url", ""), confidence=0.5)
+    target_lower = company_name.lower()
+    added = 0
+    for c in comps:
+        if not isinstance(c, dict):
+            continue
+        name = (c.get("name") or "").strip()
+        if not name or target_lower in name.lower():
+            continue
+        revenue = c.get("revenue")
+        try:
+            revenue = float(revenue) if revenue is not None else None
+        except (TypeError, ValueError):
+            revenue = None
+        stores = c.get("stores")
+        try:
+            stores = int(stores) if stores is not None else None
+        except (TypeError, ValueError):
+            stores = None
+        market.competitors.append(Competitor(
+            name=name, stores=stores, revenue=revenue,
+            revenue_unit=c.get("revenue_unit"),
+            investor=c.get("investor"),
+            evidence=ev,
+        ))
+        added += 1
+
+    if verbose:
+        print(f"    ✅ Concorrentes: {added} adicionados")
+
+
+def _enrich_multiples(
+    dossier: Dossier,
+    client: OllamaClient | None, verbose: bool,
+):
+    """Enrich sector trading multiples (EV/EBITDA, EV/Revenue medians).
+
+    These flow into the valuation engine via
+    ``dossier.market.global_multiples_median`` — once populated, the
+    multiples-comparables and DCF-exit methods stop returning None,
+    and IRR/MOIC compute properly across scenarios.
+    """
+    market = dossier.market
+    if market.global_multiples_median.is_filled:
+        return  # already populated by PDF extractor
+
+    sector = (dossier.company.profile.sector.value or "").strip()
+    if not sector:
+        if verbose:
+            print(f"\n  [Web] Múltiplos: pulando (setor não identificado)")
+        return
+
+    if verbose:
+        print(f"\n  [Web] Buscando múltiplos do setor...")
+
+    data = search_sector_multiples(sector, verbose=verbose)
+    if not data:
+        if verbose:
+            print("    ❌ Nenhum múltiplo encontrado")
+        return
+
+    if not client:
+        if verbose:
+            print("    ⚠️  Sem LLM: múltiplos requerem extração estruturada")
+        return
+
+    prompt = f"""Extraia múltiplos de trading do setor "{sector}" a partir dos dados de pesquisa abaixo.
+
+Retorne JSON no formato:
+{{
+  "ev_ebitda_median": 11.0,
+  "ev_revenue_median": 1.8,
+  "source_note": "fonte dos múltiplos (e.g. Damodaran, Capital IQ, etc)"
+}}
+
+Regras:
+- Use null se o múltiplo não estiver claramente reportado.
+- Aceite ranges (e.g. "8x-12x" → use o ponto médio).
+- NÃO invente valores: se nada confiável estiver nos snippets, retorne null em ambos.
+
+DADOS:
+{data['text'][:3000]}"""
+
+    parsed = client.extract_json(prompt, SYSTEM_ENRICH)
+    if not parsed or not isinstance(parsed, dict):
+        if verbose:
+            print("    ⚠️  LLM falhou em extrair múltiplos")
+        return
+
+    ev_ebitda = parsed.get("ev_ebitda_median")
+    ev_rev = parsed.get("ev_revenue_median")
+    try:
+        ev_ebitda = float(ev_ebitda) if ev_ebitda is not None else None
+    except (TypeError, ValueError):
+        ev_ebitda = None
+    try:
+        ev_rev = float(ev_rev) if ev_rev is not None else None
+    except (TypeError, ValueError):
+        ev_rev = None
+
+    if ev_ebitda is None and ev_rev is None:
+        if verbose:
+            print("    ❌ Múltiplos: nenhum valor confiável")
+        return
+
+    multiples_data = {
+        "ev_ebitda_median": ev_ebitda,
+        "ev_revenue_median": ev_rev,
+        "source_note": parsed.get("source_note") or "",
+    }
+    market.global_multiples_median = TrackedField.filled(
+        multiples_data,
+        _evidence("web_search:multiples", data.get("url", ""), confidence=0.4),
+    )
+
+    if verbose:
+        bits = []
+        if ev_ebitda is not None:
+            bits.append(f"EV/EBITDA={ev_ebitda:.1f}x")
+        if ev_rev is not None:
+            bits.append(f"EV/Revenue={ev_rev:.1f}x")
+        print(f"    ✅ Múltiplos: {', '.join(bits)}")
+
+
 def _update_gaps(dossier: Dossier, verbose: bool):
     """Remove gaps that were filled by enrichment."""
     profile = dossier.company.profile
@@ -286,6 +577,19 @@ def _update_gaps(dossier: Dossier, verbose: bool):
     if profile.number_of_employees.is_filled:
         filled_paths.add("company.profile.number_of_employees")
         filled_paths.add("company.employee_count")
+
+    # Market enrichment may have populated these chapter fields.
+    market = dossier.market
+    if market.market_sizes:
+        # gap_analyzer registers market gaps under several aliases — cover
+        # all known field paths that the gap analyzer might use.
+        filled_paths.add("market.market_sizes")
+        filled_paths.add("market.size")
+    if market.competitors:
+        filled_paths.add("market.competitors")
+    if market.global_multiples_median.is_filled:
+        filled_paths.add("market.global_multiples_median")
+        filled_paths.add("market.multiples")
 
     # Remove filled gaps
     original_count = len(dossier.gaps)

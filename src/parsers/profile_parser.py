@@ -43,7 +43,14 @@ def extract_legal_name(text: str) -> str | None:
     """Find a Brazilian legal entity name (LTDA/S.A./etc) in the text.
 
     Returns the first plausible match, preferring longer names. Filters
-    out advisor/consultant entities.
+    out advisor/consultant entities AND degenerate matches that arise
+    when a decorative-font slide tracks letters into space-separated
+    fragments (e.g. ``"CASA"`` rendered as ``"CA S A"`` then matched
+    by the ``S A`` suffix as if it were a legal entity).
+
+    A real Brazilian legal name has at least 2 substantive body tokens
+    (≥3 letters each) before the suffix — "MERCADÃO DOS ÓCULOS … LTDA"
+    is fine, "CA S A" is not.
     """
     best = None
     best_len = 0
@@ -53,14 +60,32 @@ def extract_legal_name(text: str) -> str | None:
         # Skip advisor/consultant self-references
         if any(hint in cand_upper for hint in _ADVISOR_LEGAL_HINTS):
             continue
-        # Require at least 3 words — single-word "LTDA" matches are noise
-        if len(cand.split()) < 3:
+        # Reject degenerate fragments: a real legal name has at least 2
+        # body tokens of ≥3 letters before the suffix. The body is
+        # everything except the trailing legal-suffix token(s).
+        # We count tokens whose alphabetic part is at least 3 chars long.
+        body_tokens = [
+            t for t in cand.split()
+            if t.upper() not in _LEGAL_SUFFIX_TOKENS
+        ]
+        substantive = [t for t in body_tokens if sum(c.isalpha() for c in t) >= 3]
+        if len(substantive) < 2:
             continue
         # Longest match wins (usually the most complete name)
         if len(cand) > best_len:
             best = cand
             best_len = len(cand)
     return best
+
+
+# Tokens recognized by LEGAL_NAME_RE as the suffix; used to identify the
+# "body" of a candidate when counting substantive body tokens.
+_LEGAL_SUFFIX_TOKENS = {
+    "LTDA", "LTDA.", "S.A.", "S.A", "S/A", "SA",
+    "EIRELI", "EPP", "MEI", "ME",
+    # Two-token form "S A" where S and A are separately tokenized
+    "S", "A",
+}
 
 
 # ── HEADQUARTERS ────────────────────────────────────────────
