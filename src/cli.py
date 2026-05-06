@@ -40,7 +40,11 @@ def _print(msg: str):
 
 @app.command()
 def process(
-    file: str = typer.Argument(..., help="Caminho para o arquivo PDF de entrada"),
+    files: list[str] = typer.Argument(
+        ..., help="Um ou mais arquivos de entrada. Aceita PDF (CIM textual) e/ou XLSX (financial pack). "
+                 "Ex: 'process cim.pdf financials.xlsx -p \"Projeto X\"'. "
+                 "Tipo é detectado por extensão; XLSX vence PDF no financeiro.",
+    ),
     project: str = typer.Option("", "--project", "-p", help="Nome do projeto (ex: 'Projeto Frank')"),
     output_format: str = typer.Option("md", "--format", "-f", help="Formato de saída: md, json, both"),
     no_llm: bool = typer.Option(False, "--no-llm", help="Desabilitar LLM e usar extração por regras"),
@@ -60,19 +64,39 @@ def process(
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
 ):
-    """Processa um CIM/PDF e gera o dossiê completo."""
+    """Processa um ou mais arquivos (PDF e/ou XLSX) e gera o dossiê completo."""
     from .pipeline.orchestrator import run_pipeline
     from .pipeline.assembler import to_markdown, to_json
     from .storage.versioning import save_version, get_next_version_number
 
-    if not os.path.exists(file):
-        _print(f"[red]Erro:[/red] Arquivo não encontrado: {file}")
+    # Validate every input exists.
+    missing = [f for f in files if not os.path.exists(f)]
+    if missing:
+        for m in missing:
+            _print(f"[red]Erro:[/red] Arquivo não encontrado: {m}")
         raise typer.Exit(1)
 
-    project_name = project or Path(file).stem.replace("_", " ")
+    # Validate extensions early (orchestrator does this too, but failing
+    # at the CLI gives a clearer error).
+    valid_exts = (".pdf", ".xlsx", ".xls")
+    bad_ext = [f for f in files if not f.lower().endswith(valid_exts)]
+    if bad_ext:
+        for b in bad_ext:
+            _print(f"[red]Erro:[/red] Extensão não suportada: {b} (use .pdf, .xlsx, ou .xls)")
+        raise typer.Exit(1)
+
+    pdf_count = sum(1 for f in files if f.lower().endswith(".pdf"))
+    if pdf_count > 1:
+        _print(f"[red]Erro:[/red] múltiplos PDFs não suportados ainda ({pdf_count} dados); passe no máximo 1 PDF.")
+        raise typer.Exit(1)
+
+    # Default project name: stem of the first input.
+    project_name = project or Path(files[0]).stem.replace("_", " ")
 
     mode = "regras (sem LLM)" if no_llm else "LLM (Ollama)"
-    _print(f"\n[bold]Processando:[/bold] {file}")
+    _print(f"\n[bold]Processando {len(files)} arquivo(s):[/bold]")
+    for f in files:
+        _print(f"  - {f}")
     _print(f"[bold]Projeto:[/bold] {project_name}")
     _print(f"[bold]Extração:[/bold] {mode}")
     if enrich:
@@ -88,8 +112,11 @@ def process(
     version = get_next_version_number(project_name)
 
     dossier = run_pipeline(
-        file, project_name=project_name,
-        use_llm=not no_llm, enrich=enrich, verbose=verbose
+        inputs=list(files),
+        project_name=project_name,
+        use_llm=not no_llm,
+        enrich=enrich,
+        verbose=verbose,
     )
     dossier.metadata.version = version
 

@@ -97,56 +97,132 @@ def _extract_financials(
 
 
 def run_pipeline(
-    pdf_path: str,
+    pdf_path: str | None = None,
     project_name: str = "",
     use_llm: bool = True,
     enrich: bool = False,
     verbose: bool = False,
+    *,
+    inputs: list[str] | None = None,
 ) -> Dossier:
-    """Run the full dossier pipeline on a PDF file.
+    """Run the full dossier pipeline on one or more input files.
 
-    Args:
-        pdf_path: Path to the input PDF
-        project_name: Name for the project
-        use_llm: If True, use Ollama LLM for extraction. If False, fall back to rules.
-        enrich: If True, search the web to fill gaps marked with requires_internet.
-        verbose: If True, print progress messages.
+    Two calling conventions are supported:
+
+    1. **Multi-input (preferred, E2+)** — pass ``inputs=[file1, file2, ...]``.
+       Files are routed by extension: ``.pdf`` goes through the existing
+       PDF pipeline (parse → classify → extract LLM/rules → financial
+       text-parser); ``.xlsx`` / ``.xls`` goes through
+       ``parse_xlsx_financials``. The pipeline runs the PDF path first
+       (so soft chapters — profile, executives, market, transaction —
+       come from the PDF), then merges in any XLSX-derived financials.
+       Per the agreed merge policy, **XLSX always wins on financial
+       data**: any DRE / balance sheet / consolidated DRE produced by
+       the XLSX parser overwrites the corresponding entry from the PDF
+       parser.
+
+    2. **Legacy (single PDF)** — pass ``pdf_path=path``. This is the
+       interface used by the existing tests and ``cli.py`` before E2.
+       It is kept as a thin shim that internally builds
+       ``inputs=[pdf_path]``.
+
+    Parameters
+    ----------
+    pdf_path : str, optional
+        Legacy single-PDF entry point. Mutually exclusive with ``inputs``.
+    inputs : list[str], optional
+        New multi-input entry point. Order does not matter for routing
+        (files are dispatched by extension), but it does decide where
+        each file's name appears in ``metadata.source_files``.
+    project_name, use_llm, enrich, verbose
+        Same semantics as before.
     """
-    source_file = os.path.basename(pdf_path)
+    # ── Resolve inputs ────────────────────────────────────────────────
+    if inputs is None and pdf_path is None:
+        raise ValueError("run_pipeline requires either `inputs` or `pdf_path`")
+    if inputs is not None and pdf_path is not None:
+        raise ValueError("pass either `inputs` or `pdf_path`, not both")
+    if inputs is None:
+        inputs = [pdf_path]                     # legacy shim
+
+    pdf_inputs = [p for p in inputs if _is_pdf_path(p)]
+    xlsx_inputs = [p for p in inputs if _is_xlsx_path(p)]
+    unknown = [p for p in inputs if not _is_pdf_path(p) and not _is_xlsx_path(p)]
+    if unknown:
+        raise ValueError(
+            f"unrecognized input file extension(s): {unknown}. "
+            f"Supported: .pdf, .xlsx, .xls"
+        )
+    if len(pdf_inputs) > 1:
+        # Could be supported later, but for now keep it simple — Frank/Regenera
+        # both have at most one PDF.
+        raise ValueError(
+            f"multiple PDF inputs not supported yet ({len(pdf_inputs)} given). "
+            f"Pass exactly one PDF and any number of XLSX files."
+        )
+
+    primary_pdf = pdf_inputs[0] if pdf_inputs else None
+    source_files = [os.path.basename(p) for p in inputs]
+
     if not project_name:
-        project_name = source_file.replace(".pdf", "").replace("_", " ")
+        if primary_pdf is not None:
+            project_name = os.path.basename(primary_pdf).replace(".pdf", "").replace("_", " ")
+        elif xlsx_inputs:
+            project_name = (
+                os.path.basename(xlsx_inputs[0])
+                .rsplit(".", 1)[0]
+                .replace("_", " ")
+            )
 
-    # Step 1: Parse
-    if verbose:
-        print("Step 1: Parsing PDF...")
-    blocks = parse_pdf(pdf_path)
-
-    # Step 2: Classify
-    if verbose:
-        print(f"Step 2: Classifying {len(blocks)} pages...")
-    classified = classify_pages(blocks)
-
-    # Step 3: Extract financials (always uses text parser)
-    if verbose:
-        print("Step 3: Extracting financials...")
-    financials = _extract_financials(classified, source_file)
-
-    # Step 4: Extract other chapters
-    if use_llm:
+    # ── PDF-driven path (soft chapters + PDF-financials, if any) ──────
+    if primary_pdf is not None:
+        pdf_basename = os.path.basename(primary_pdf)
         if verbose:
-            print("Step 4: Extracting with LLM (Ollama)...")
-        company, market, transaction = _extract_with_llm(classified, source_file, verbose, pdf_path=pdf_path)
+            print(f"Step 1: Parsing PDF ({pdf_basename})...")
+        blocks = parse_pdf(primary_pdf)
+
+        if verbose:
+            print(f"Step 2: Classifying {len(blocks)} pages...")
+        classified = classify_pages(blocks)
+
+        if verbose:
+            print("Step 3: Extracting financials from PDF...")
+        financials = _extract_financials(classified, pdf_basename)
+
+        if use_llm:
+            if verbose:
+                print("Step 4: Extracting with LLM (Ollama)...")
+            company, market, transaction = _extract_with_llm(
+                classified, pdf_basename, verbose, pdf_path=primary_pdf,
+            )
+        else:
+            if verbose:
+                print("Step 4: Extracting with rules (fallback)...")
+            company, market, transaction = _extract_with_rules(classified, pdf_basename)
     else:
+        # No PDF given — soft chapters stay empty, will surface as gaps.
         if verbose:
-            print("Step 4: Extracting with rules (fallback)...")
-        company, market, transaction = _extract_with_rules(classified, source_file)
+            print("Step 1-4: No PDF input; soft chapters left empty (will surface as gaps).")
+        financials = FinancialChapter()
+        company = CompanyChapter()
+        market = MarketChapter()
+        transaction = TransactionChapter()
 
-    # Step 5: Assemble
+    # ── XLSX merge (financial data only) ──────────────────────────────
+    if xlsx_inputs:
+        if verbose:
+            print(f"Step 3b: Merging financial data from {len(xlsx_inputs)} XLSX file(s)...")
+        for xlsx_path in xlsx_inputs:
+            financials = _merge_xlsx_financials(
+                base=financials, xlsx_path=xlsx_path, verbose=verbose,
+            )
+
+    # ── Assemble ─────────────────────────────────────────────────────
     dossier = Dossier(
         metadata=DossierMetadata(
             project_name=project_name,
             target_company=company.profile.trade_name.value or "Unknown",
-            source_files=[source_file],
+            source_files=source_files,
             version="v001",
         ),
         company=company,
@@ -155,12 +231,11 @@ def run_pipeline(
         transaction=transaction,
     )
 
-    # Step 5b: Gap analysis
+    # Gap analysis — runs the same regardless of how data got in
     if verbose:
         print("Step 5: Analyzing gaps...")
     dossier.gaps = _analyze_gaps(dossier)
 
-    # Step 6: Web enrichment (optional)
     if enrich:
         if verbose:
             print("Step 6: Web enrichment...")
@@ -168,6 +243,85 @@ def run_pipeline(
         dossier = enrich_dossier(dossier, use_llm=use_llm, verbose=verbose)
 
     return dossier
+
+
+# ── Multi-input helpers ──────────────────────────────────────────────────
+def _is_pdf_path(p: str) -> bool:
+    return p.lower().endswith(".pdf")
+
+
+def _is_xlsx_path(p: str) -> bool:
+    return p.lower().endswith((".xlsx", ".xls"))
+
+
+def _merge_xlsx_financials(
+    *,
+    base: FinancialChapter,
+    xlsx_path: str,
+    verbose: bool = False,
+) -> FinancialChapter:
+    """Merge an XLSX-parsed FinancialChapter into an existing one.
+
+    Merge policy (decided in the E2 design discussion):
+        * **XLSX wins on financial data.** Any entity DRE/BS produced by
+          the XLSX parser replaces the corresponding entry in `base`.
+          Same for `dre_consolidated`.
+        * Entities present only in the PDF chapter are kept.
+        * Entities present only in the XLSX chapter are added.
+        * The `non_operating` flag from the XLSX side is honored.
+        * Derived fields on `base` (metrics, capex_projection,
+          dividend_projection) are preserved — those are populated
+          by post-processing that reads from the merged statements,
+          and re-running it after merge happens elsewhere in the
+          pipeline if needed.
+
+    The merge is non-destructive on `base`: a new FinancialChapter
+    is built and returned. This keeps `_extract_financials`'s output
+    intact in case a later step wants to inspect the pre-merge state.
+    """
+    from ..parsers.xlsx_financial_parser import parse_xlsx_financials
+
+    result = parse_xlsx_financials(xlsx_path)
+    if verbose:
+        for issue in result.issues:
+            print(f"  xlsx parse: {issue}")
+
+    xlsx_chapter = result.chapter
+
+    # Start from a shallow copy of `base`. We rebuild `entities` because we
+    # need to merge by name, not by position.
+    merged = FinancialChapter(
+        entities=list(base.entities),                  # may be replaced below
+        dre_consolidated=base.dre_consolidated,
+        metrics=base.metrics,
+        capex_projection=base.capex_projection,
+        dividend_projection=base.dividend_projection,
+    )
+
+    # Index existing entities by normalized name for O(1) overwrite lookup.
+    # We use the chapter's own `get_entity` (accent/case-insensitive) so
+    # "Lojas Próprias" from PDF and "Lojas Proprias" from XLSX collide.
+    for xlsx_entity in xlsx_chapter.entities:
+        existing = merged.get_entity(xlsx_entity.name)
+        if existing is None:
+            merged.entities.append(xlsx_entity)
+        else:
+            # XLSX wins: replace DRE and BS if XLSX has them.
+            if xlsx_entity.dre is not None:
+                existing.dre = xlsx_entity.dre
+            if xlsx_entity.balance_sheet is not None:
+                existing.balance_sheet = xlsx_entity.balance_sheet
+            # Promote non_operating flag from XLSX (XLSX is the
+            # structured source — if it says non-op, trust it).
+            if xlsx_entity.non_operating:
+                existing.non_operating = True
+
+    # Consolidated DRE: XLSX wins outright.
+    if xlsx_chapter.dre_consolidated is not None:
+        merged.dre_consolidated = xlsx_chapter.dre_consolidated
+
+    return merged
+
 
 
 def _extract_with_llm(
