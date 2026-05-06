@@ -84,6 +84,12 @@ class FinancialModel:
     assumptions: ModelAssumptions = field(default_factory=ModelAssumptions)
     historical: list[ProjectionYear] = field(default_factory=list)
     projected: list[ProjectionYear] = field(default_factory=list)
+    non_operating: bool = False
+    """Mirrors FinancialEntity.non_operating. When True, ConsolidatedModel
+    excludes this entity from the consolidated view (per the policy agreed
+    in E1: non-operating entities like CSCs / shared-services centers are
+    surfaced individually in the dossier for transparency, but not summed
+    into the operating consolidated that drives valuation)."""
 
     @property
     def all_years(self) -> list[ProjectionYear]:
@@ -142,13 +148,27 @@ class ConsolidatedModel:
     consolidated: list[ProjectionYear] = field(default_factory=list)
 
     def build_consolidated(self):
-        """Sum all entity projections into a consolidated view."""
+        """Sum operating-entity projections into a consolidated view.
+
+        Entities flagged ``non_operating=True`` (CSCs, shared-services
+        centers, etc.) are skipped — they would distort revenue and
+        EBITDA totals (a CSC has zero revenue and negative EBITDA by
+        construction). They still appear individually elsewhere in the
+        dossier for transparency.
+        """
         if not self.entities:
             return
 
-        # Get all years across all entities
+        operating = [e for e in self.entities if not e.non_operating]
+        if not operating:
+            # All entities flagged non-operating — fall back to including
+            # them all rather than producing an empty consolidated.
+            # This is defensive: shouldn't happen in practice.
+            operating = list(self.entities)
+
+        # Get all years across all operating entities
         all_years_set = set()
-        for ent in self.entities:
+        for ent in operating:
             for y in ent.all_years:
                 all_years_set.add(y.year)
 
@@ -156,7 +176,7 @@ class ConsolidatedModel:
         for year_str in sorted(all_years_set):
             cons = ProjectionYear(year=year_str, is_projected="E" in year_str)
 
-            for ent in self.entities:
+            for ent in operating:
                 for y in ent.all_years:
                     if y.year == year_str:
                         cons.gross_revenue += y.gross_revenue
@@ -206,11 +226,34 @@ class ConsolidatedModel:
 # ═══════════════════════════════════════════════════════════════
 # MODEL BUILDER
 # ═══════════════════════════════════════════════════════════════
+def _normalize_label(s: str) -> str:
+    """Case- and accent-insensitive label normalization for keyword matching.
+
+    Brazilian financial-pack producers vary on accent preservation: a CIM
+    might say "Receita Líquida" while a financials XLSX says "Receita
+    Liquida" (no tilde). Without normalization, keyword matchers using
+    one form silently miss the other and the entire pipeline reads zero
+    values from the DRE — every operating projection collapses to no
+    revenue, EBITDA pulled from thin air, scenarios diverge in absurd
+    ways. Fold to ASCII so both forms match the same keyword bank.
+    """
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", s or "")
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return stripped.lower()
+
+
 def _extract_dre_value(stmt: FinancialStatement, year: str, label_keywords: list[str]) -> float:
-    """Find a value in a DRE by matching label keywords."""
+    """Find a value in a DRE by matching label keywords.
+
+    Match is case- and accent-insensitive on both sides — see
+    ``_normalize_label`` for the rationale. The first line whose
+    normalized label contains any normalized keyword wins.
+    """
+    norm_keywords = [_normalize_label(kw) for kw in label_keywords]
     for line in stmt.lines:
-        label_lower = line.label.lower()
-        if any(kw in label_lower for kw in label_keywords):
+        norm_label = _normalize_label(line.label)
+        if any(kw in norm_label for kw in norm_keywords):
             val = line.values.get(year)
             if val is not None:
                 return float(val)
@@ -272,13 +315,54 @@ def _derive_assumptions(stmt: FinancialStatement, entity_name: str) -> ModelAssu
 
 
 def _build_historical(stmt: FinancialStatement) -> list[ProjectionYear]:
-    """Convert DRE historical data into ProjectionYear objects."""
+    """Convert DRE historical data into ProjectionYear objects.
+
+    Decides which years are historical (actual) vs projected per the
+    following precedence:
+      1. If any FinancialLine carries an ``is_projected`` map (the XLSX
+         parser populates this; the PDF text parser may or may not),
+         use it as authoritative — it knows the cutoff year detected
+         from the workbook's Cover sheet, even though we strip the
+         ``E`` suffix from the year label.
+      2. Otherwise fall back to checking for the ``E`` suffix on the
+         year label itself ("2030E" ⇒ projected). This is what the
+         PDF parser's output looks like.
+
+    Without rule 1, year labels normalised by the XLSX parser (which
+    strips the trailing "E" so downstream code sees a clean "2030")
+    would all be flagged historical, and scenario adjustment factors
+    would never be applied in ``build_entity_model`` — every scenario
+    would collapse to the same numbers. This is precisely the bug
+    that produced identical pessimista/base/otimista outputs on the
+    Regenera run.
+    """
     years = []
     if not stmt or not stmt.lines or not stmt.years:
         return years
 
+    # Build a year → is_projected map from the FinancialLines, if available.
+    # We look at every line and prefer "any line says projected" over a
+    # single line saying historical — projection flags should be uniform
+    # across lines for a given year, but if they aren't, we trust the
+    # projected signal (it's safer to over-project than to apply scenario
+    # factors to actual historicals).
+    is_projected_by_year: dict[str, bool] = {}
+    for line in stmt.lines:
+        if not line.is_projected:
+            continue
+        for yr, flag in line.is_projected.items():
+            if flag:
+                is_projected_by_year[yr] = True
+            elif yr not in is_projected_by_year:
+                is_projected_by_year[yr] = False
+
     for year_str in stmt.years:
-        is_proj = "E" in year_str
+        if year_str in is_projected_by_year:
+            is_proj = is_projected_by_year[year_str]
+        else:
+            # Fallback: the trailing "E" convention used by the PDF parser.
+            is_proj = "E" in year_str
+
         py = ProjectionYear(year=year_str, is_projected=is_proj)
 
         py.gross_revenue = _extract_dre_value(stmt, year_str, ["receita bruta"])

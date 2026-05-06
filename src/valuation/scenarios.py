@@ -359,14 +359,18 @@ def build_scenarios(
 
     # Discover entities dynamically from the financial chapter. Each entity
     # contributes a DRE (when available) to the consolidated projection.
-    entities = [(e.name, e.dre) for e in fin.entities]
+    # We capture ``non_operating`` here and propagate it to each scenario's
+    # FinancialModels — ConsolidatedModel filters non-operating entities
+    # out of the consolidated, but keeps them in the per-entity view.
+    entities = [(e.name, e.dre, e.non_operating) for e in fin.entities]
 
     # ── BASE SCENARIO (CIM projections as-is) ────────────────
     base_models = []
     base_assumptions_by_entity = {}
 
-    for name, stmt in entities:
+    for name, stmt, non_op in entities:
         model = build_entity_model(stmt, name, verbose=verbose)
+        model.non_operating = non_op
         base_models.append(model)
         base_assumptions_by_entity[name] = deepcopy(model.assumptions)
 
@@ -394,7 +398,7 @@ def build_scenarios(
 
     # ── PESSIMISTIC SCENARIO ─────────────────────────────────
     pess_models = []
-    for name, stmt in entities:
+    for name, stmt, non_op in entities:
         base_a = base_assumptions_by_entity.get(name, ModelAssumptions())
         # Scale CIM projections down: revenue × pessimistic_factor, worse margins
         adj_factors = {
@@ -406,6 +410,7 @@ def build_scenarios(
             stmt, name, verbose=False, adjustment_factors=adj_factors,
         )
         model.assumptions.label = "Pessimista"
+        model.non_operating = non_op
         pess_models.append(model)
 
     engine.pessimistic = Scenario(
@@ -431,7 +436,7 @@ def build_scenarios(
 
     # ── OPTIMISTIC SCENARIO ──────────────────────────────────
     opt_models = []
-    for name, stmt in entities:
+    for name, stmt, non_op in entities:
         base_a = base_assumptions_by_entity.get(name, ModelAssumptions())
         # Scale CIM projections up: revenue × optimistic_factor, better margins
         adj_factors = {
@@ -443,6 +448,7 @@ def build_scenarios(
             stmt, name, verbose=False, adjustment_factors=adj_factors,
         )
         model.assumptions.label = "Otimista"
+        model.non_operating = non_op
         opt_models.append(model)
 
     engine.optimistic = Scenario(
