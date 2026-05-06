@@ -48,7 +48,11 @@ def process(
     project: str = typer.Option("", "--project", "-p", help="Nome do projeto (ex: 'Projeto Frank')"),
     output_format: str = typer.Option("md", "--format", "-f", help="Formato de saída: md, json, both"),
     no_llm: bool = typer.Option(False, "--no-llm", help="Desabilitar LLM e usar extração por regras"),
-    enrich: bool = typer.Option(False, "--enrich", "-e", help="Enriquecer com dados da web (busca pública)"),
+    enrich: bool = typer.Option(
+        True, "--enrich/--no-enrich", "-e/-E",
+        help="Enriquecer com dados da web (busca pública) — default ligado. "
+             "Use --no-enrich pra desligar (útil em testes determinísticos).",
+    ),
     xlsx: bool = typer.Option(False, "--xlsx", help="Gerar planilha Excel (.xlsx)"),
     pptx: bool = typer.Option(False, "--pptx", help="Gerar apresentação PowerPoint (.pptx)"),
     valuation: bool = typer.Option(False, "--valuation", help="Executar modelo financeiro + cenários + DCF"),
