@@ -11,7 +11,7 @@ from ..models.dossier import Dossier, DossierMetadata
 from ..models.evidence import Evidence, TrackedField, FieldStatus, Gap
 from ..models.company import CompanyChapter, CompanyProfile
 from ..models.financials import FinancialChapter
-from ..models.market import MarketChapter, TransactionChapter
+from ..models.market import MarketChapter, MarketSize, TransactionChapter
 from ..parsers.pdf_parser import parse_pdf
 from ..parsers.financial_parser import parse_financial_text
 from ..pipeline.classifier import classify_pages, ClassifiedPage
@@ -104,6 +104,10 @@ def run_pipeline(
     verbose: bool = False,
     *,
     inputs: list[str] | None = None,
+    ev_ebitda_override: float | None = None,
+    ev_revenue_override: float | None = None,
+    market_size_brl_bn_override: float | None = None,
+    market_cagr_override: float | None = None,
 ) -> Dossier:
     """Run the full dossier pipeline on one or more input files.
 
@@ -231,6 +235,22 @@ def run_pipeline(
         transaction=transaction,
     )
 
+    # Manual overrides — values supplied via CLI flags or programmatic kwargs
+    # take precedence over web enrichment AND PDF/XLSX extraction. This is
+    # how analysts inject sector multiples and market sizing they already
+    # know off the top of their head, without needing the (flaky) web search
+    # path. By running BEFORE gap analysis, fields populated this way no
+    # longer surface as gaps; by running BEFORE enrich, the enricher's
+    # "skip if already filled" guard kicks in and we don't double-populate.
+    _apply_manual_overrides(
+        dossier,
+        ev_ebitda=ev_ebitda_override,
+        ev_revenue=ev_revenue_override,
+        market_size_brl_bn=market_size_brl_bn_override,
+        market_cagr=market_cagr_override,
+        verbose=verbose,
+    )
+
     # Gap analysis — runs the same regardless of how data got in
     if verbose:
         print("Step 5: Analyzing gaps...")
@@ -322,6 +342,103 @@ def _merge_xlsx_financials(
 
     return merged
 
+
+# ── Manual overrides ─────────────────────────────────────────────────────
+def _apply_manual_overrides(
+    dossier: "Dossier",
+    *,
+    ev_ebitda: float | None,
+    ev_revenue: float | None,
+    market_size_brl_bn: float | None,
+    market_cagr: float | None,
+    verbose: bool = False,
+) -> None:
+    """Inject analyst-supplied values into the dossier in place.
+
+    These overrides exist for fields that are commonly known to the
+    analyst running the pipeline but are flaky to extract automatically:
+
+    * **Sector multiples** (EV/EBITDA, EV/Revenue): typically known
+      ranges per industry that an analyst carries in their head.
+      Without these, ``run_full_valuation`` silently skips the
+      multiples-comparables and DCF-exit methods, and IRR/MOIC drop
+      to zero across all scenarios.
+    * **Market sizing** (TAM in BRL Bn, CAGR): often quoted in CIM
+      executive summaries or pitch decks but in formats the LLM
+      misses (e.g. visual charts, footnotes). When the analyst has
+      a number from sector reports, supplying it directly is faster
+      and more accurate than hoping web search returns something useful.
+
+    The override is only applied when the field is currently empty —
+    if a CIM/XLSX already populated the value, we don't clobber it.
+    None arguments are silently ignored. The function is idempotent
+    and safe to call when no overrides are supplied.
+
+    Calling this BEFORE gap analysis ensures the gap analyzer sees
+    the populated fields and doesn't surface them as "missing".
+    Calling BEFORE web enrichment relies on the enricher's existing
+    "skip if already filled" guard to avoid double-population.
+    """
+    if (ev_ebitda is None and ev_revenue is None
+            and market_size_brl_bn is None and market_cagr is None):
+        return
+
+    # Source file marker so the dossier preserves provenance ("manual")
+    ev = _evidence(
+        source="manual_override",
+        page=0,
+        excerpt="Supplied via CLI flag (analyst override)",
+        confidence=1.0,
+    )
+
+    market = dossier.market
+
+    # Multiples — packed as a dict to mirror the shape produced by the
+    # web enrichment path in E3.2.
+    if (ev_ebitda is not None or ev_revenue is not None) \
+            and not market.global_multiples_median.is_filled:
+        multiples_data = {
+            "ev_ebitda_median": ev_ebitda,
+            "ev_revenue_median": ev_revenue,
+            "source_note": "Manual override (CLI flag)",
+        }
+        market.global_multiples_median = TrackedField.filled(multiples_data, ev)
+        if verbose:
+            bits = []
+            if ev_ebitda is not None:
+                bits.append(f"EV/EBITDA={ev_ebitda:.1f}x")
+            if ev_revenue is not None:
+                bits.append(f"EV/Revenue={ev_revenue:.1f}x")
+            print(f"  [Override] Múltiplos manuais: {', '.join(bits)}")
+
+    # Market size — appended only when no sizes are present yet.
+    # We use the current year as a sensible default; analysts can
+    # always override the year too if a future flag is added.
+    if market_size_brl_bn is not None and not market.market_sizes:
+        from datetime import datetime
+        size = MarketSize(
+            geography="Brasil",
+            value=float(market_size_brl_bn),
+            unit="BRL Bn",
+            year=datetime.now().year,
+            cagr=float(market_cagr) if market_cagr is not None else None,
+            evidence=ev,
+        )
+        market.market_sizes.append(size)
+        if verbose:
+            cagr_str = f", CAGR={market_cagr*100:.1f}%" if market_cagr is not None else ""
+            print(f"  [Override] Tamanho de mercado: BRL {market_size_brl_bn:.1f} Bn{cagr_str}")
+    elif market_cagr is not None and not market.market_sizes:
+        # CAGR alone, no size — still useful, register a size-less entry
+        # with year and CAGR.
+        from datetime import datetime
+        size = MarketSize(
+            geography="Brasil", value=0.0, unit="BRL Bn",
+            year=datetime.now().year, cagr=float(market_cagr), evidence=ev,
+        )
+        market.market_sizes.append(size)
+        if verbose:
+            print(f"  [Override] CAGR de mercado: {market_cagr*100:.1f}% (sem tamanho)")
 
 
 def _extract_with_llm(

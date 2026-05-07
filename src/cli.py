@@ -66,6 +66,27 @@ def process(
         help="Override do stake do investidor (ex: 0.35 para 35%%). "
              "Se omitido, usa o valor extraído do CIM ou 30%% como default."
     ),
+    ev_ebitda_override: float = typer.Option(
+        None, "--ev-ebitda",
+        help="Múltiplo EV/EBITDA mediano do setor (ex: 11.0). "
+             "Use quando o CIM/web não fornece — destrava cálculos de "
+             "EV/EBITDA, EV/Revenue e IRR/MOIC nos 3 cenários."
+    ),
+    ev_revenue_override: float = typer.Option(
+        None, "--ev-revenue",
+        help="Múltiplo EV/Revenue mediano do setor (ex: 1.8). "
+             "Complementar a --ev-ebitda."
+    ),
+    market_size_override: float = typer.Option(
+        None, "--market-size-brl-bn",
+        help="Tamanho do mercado endereçável em BRL Bn (ex: 12.5). "
+             "Use quando setor é conhecido mas web search/PDF não trouxe."
+    ),
+    market_cagr_override: float = typer.Option(
+        None, "--market-cagr",
+        help="CAGR do mercado em decimal (ex: 0.08 para 8%%). "
+             "Pode ser usado com ou sem --market-size-brl-bn."
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Mostrar progresso detalhado"),
 ):
     """Processa um ou mais arquivos (PDF e/ou XLSX) e gera o dossiê completo."""
@@ -121,6 +142,10 @@ def process(
         use_llm=not no_llm,
         enrich=enrich,
         verbose=verbose,
+        ev_ebitda_override=ev_ebitda_override,
+        ev_revenue_override=ev_revenue_override,
+        market_size_brl_bn_override=market_size_override,
+        market_cagr_override=market_cagr_override,
     )
     dossier.metadata.version = version
 
