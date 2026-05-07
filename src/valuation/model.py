@@ -166,15 +166,37 @@ class ConsolidatedModel:
             # This is defensive: shouldn't happen in practice.
             operating = list(self.entities)
 
-        # Get all years across all operating entities
+        # Get all years across all operating entities, plus a year→is_projected
+        # map sourced from each entity's models. The "E" suffix on the year
+        # label is unreliable here for the same reason it was in
+        # _build_historical: the XLSX parser strips the suffix when populating
+        # FinancialLine, leaving year labels like "2025" / "2030" with no
+        # textual cue for projection status. Without this map, the consolidated
+        # ProjectionYears all come out is_projected=False, and the IRR engine
+        # — which filters its input by is_projected with no fallback — sees
+        # an empty list and silently returns the Newton initial guess (15%)
+        # with MOIC=0. That bug was the smoking gun behind v007's
+        # IRR=15.0%/MOIC=0.00x in all three scenarios.
         all_years_set = set()
+        is_projected_by_year: dict[str, bool] = {}
         for ent in operating:
             for y in ent.all_years:
                 all_years_set.add(y.year)
+                # Once any entity says a year is projected, treat it as
+                # projected in the consolidated. Safer to over-project than
+                # to over-historicize — the latter feeds garbage into IRR.
+                if y.is_projected:
+                    is_projected_by_year[y.year] = True
+                elif y.year not in is_projected_by_year:
+                    is_projected_by_year[y.year] = False
 
         self.consolidated = []
         for year_str in sorted(all_years_set):
-            cons = ProjectionYear(year=year_str, is_projected="E" in year_str)
+            # Prefer the cross-entity map; fall back to the "E" suffix
+            # convention only when the map didn't get populated (defensive,
+            # for hand-crafted entities in tests).
+            is_proj = is_projected_by_year.get(year_str, "E" in year_str)
+            cons = ProjectionYear(year=year_str, is_projected=is_proj)
 
             for ent in operating:
                 for y in ent.all_years:
