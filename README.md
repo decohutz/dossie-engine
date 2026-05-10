@@ -1,287 +1,330 @@
 # Dossiê Engine
 
-Sistema de geração inteligente de dossiês a partir de documentos de transação (CIM, teasers, apresentações institucionais).
+Sistema de geração inteligente de dossiês a partir de documentos de transação (CIMs, infopacks, apresentações institucionais).
 
-Recebe um PDF como entrada, extrai informações estruturadas via LLM local (Ollama), enriquece com dados públicos da web, identifica lacunas, e gera um dossiê completo em Markdown, JSON e Excel — com rastreabilidade de cada dado até a página e trecho de origem.
+Recebe **PDFs e/ou XLSX** como entrada, extrai informações estruturadas via LLM local (Ollama), enriquece com dados públicos da web, identifica lacunas, e gera dossiê completo em **Markdown, JSON, Excel e PowerPoint** — com valuation completo (DCF + Múltiplos + IRR/MOIC em 3 cenários), análise de gaps, e rastreabilidade de cada dado até a página/sheet de origem.
 
-## Status atual: v0.4.0
+## Status atual: v0.6.0 (pós E6)
 
-Pipeline ponta a ponta funcional com extração por LLM local, enriquecimento web e exportação Excel.
+Pipeline ponta a ponta funcional, com **dois golden cases** travados por regression byte-identical: Frank (PDF, óptica, 3 entidades) e Regenera-shape (XLSX, beleza, 6 entidades incluindo CSC non-operating).
 
-| Indicador | Resultado |
-|-----------|-----------|
-| Executivos extraídos | 5 (com background e participação) |
-| Shareholders | 2 |
-| Timeline events | 8-9 |
-| Produtos/marcas | 4-6 |
-| Concorrentes | 5 |
-| Demonstrativos financeiros | 6 (DRE + Balanço × 3 entidades, 10 anos) |
-| Market sizes | 3 |
-| Gaps preenchidos pela web | 4 (reputação, contencioso, razão social, sede) |
-| Gaps restantes | 4 (1 crítica, 3 importantes) |
-| Output Excel | 10 abas formatadas |
+| Indicador | Frank (PDF) | Regenera (XLSX + PDF) |
+|-----------|-------------|----------------------|
+| Entidades financeiras | 3 (todas operating) | 6 (5 ops + 1 CSC non-op) |
+| DREs extraídos (anos) | 10 | 7 (1 histórico + 6 projetados) |
+| Balanços extraídos | 3 | 0 (CIM não tem) |
+| Cenários valuation | Pess/Base/Otim divergem | Pess/Base/Otim divergem |
+| IRR / MOIC | calcula e diverge | calcula e diverge |
+| Slides PPT gerados | 15 | 14 (Balanço suprimido) |
+| Abas Excel geradas | 11 | 11 |
+| Suite de testes | 142 passed em ~3min | (mesma suite, ambos cobertos) |
+
+Veja `CHANGELOG.md` para detalhes de cada fase (E1 → E6) e bugs corrigidos (B1 → B8).
 
 ## Setup
 
 ```bash
-# Clone o repositório
-git clone https://github.com/SEU-USER/dossie-engine.git
+git clone https://github.com/decohutz/dossie-engine.git
 cd dossie-engine
 
-# Crie e ative o ambiente virtual
 python -m venv .venv
 source .venv/bin/activate    # Linux/Mac
 .venv\Scripts\activate       # Windows
 
-# Instale as dependências
-pip install pdfplumber typer rich openpyxl requests beautifulsoup4
+pip install pdfplumber typer rich openpyxl requests beautifulsoup4 \
+            python-pptx matplotlib pytest
 
-# Instale o Ollama e o modelo (para extração por LLM)
+# Ollama + modelo (extração por LLM)
 # https://ollama.ai
 ollama pull qwen2.5:14b
 
-# Coloque o PDF de entrada
+# Coloque os arquivos de entrada
 cp ~/Downloads/Projeto_Frank_CIM.pdf data/inputs/
+# ou XLSX
+cp ~/Downloads/Infopack.xlsx data/inputs/
 ```
 
 ## Uso
 
-### Processar um CIM e gerar o dossiê
+### Processar um CIM
 
 ```bash
-# Básico: extrai com LLM, gera MD + JSON
-python -m src.cli process data/inputs/Projeto_Frank_CIM.pdf -p "Projeto Frank" -f both -v
+# PDF only (caso Frank)
+python -m src.cli process data/inputs/Projeto_Frank_CIM.pdf -p "Projeto Frank" \
+    --valuation --xlsx --pptx -v
 
-# Completo: com enriquecimento web e Excel
-python -m src.cli process data/inputs/Projeto_Frank_CIM.pdf -p "Projeto Frank" -f both --enrich --xlsx -v
+# XLSX only (financial pack puro)
+python -m src.cli process data/inputs/Infopack.xlsx -p "Projeto X" \
+    --valuation --xlsx --pptx -v
 
-# Sem LLM (fallback para regras, só funciona com Projeto Frank)
-python -m src.cli process data/inputs/Projeto_Frank_CIM.pdf -p "Projeto Frank" --no-llm -v
+# Misto: PDF (institucional) + XLSX (financeiros) — formato Regenera
+python -m src.cli process data/inputs/pitch.pdf data/inputs/financial_pack.xlsx \
+    -p "Projeto X" --valuation --xlsx --pptx -v
+
+# Com manual overrides para múltiplos e mercado (recomendado quando
+# DDG está bloqueado ou quando você já sabe os números do setor)
+python -m src.cli process data/inputs/financial_pack.xlsx \
+    -p "Projeto X" --valuation --xlsx --pptx -v \
+    --ev-ebitda 11.0 --ev-revenue 1.8 \
+    --market-size-brl-bn 12.5 --market-cagr 0.08
 ```
 
-Outputs gerados:
-- `data/outputs/dossie_projeto_frank.md` — dossiê legível em Markdown
-- `data/outputs/dossie_projeto_frank.json` — dossiê estruturado em JSON
-- `data/outputs/dossie_projeto_frank.xlsx` — planilha Excel com 10 abas
-- `data/versions/projeto_frank/v001_*.json` — snapshot versionado
+Outputs gerados em `data/outputs/`:
+- `dossie_<projeto>.md` — dossiê legível em Markdown
+- `dossie_<projeto>.json` — dossiê estruturado em JSON
+- `dossie_<projeto>.xlsx` — planilha Excel (11 abas)
+- `dossie_<projeto>.pptx` — apresentação PowerPoint (14-15 slides)
+- `valuation_<projeto>.json` — resultado completo de valuation (3 cenários × 4 métodos)
+- `data/versions/<projeto>/v00X_*.json` — snapshot versionado
 
-### Ver as lacunas
-
-```bash
-python -m src.cli gaps -p "Projeto Frank"
-```
-
-### Listar versões salvas
+### Outros comandos
 
 ```bash
-python -m src.cli versions -p "Projeto Frank"
-```
-
-### Comparar duas versões
-
-```bash
-python -m src.cli diff -p "Projeto Frank" --old v001
-```
-
-### Ver resumo de uma versão
-
-```bash
-python -m src.cli show -p "Projeto Frank" -f summary
+python -m src.cli gaps -p "Projeto X"            # ver lacunas
+python -m src.cli versions -p "Projeto X"        # listar versões
+python -m src.cli diff -p "Projeto X" --old v001
+python -m src.cli show -p "Projeto X" -f summary
 ```
 
 ## Flags do CLI
+
+### Comuns
 
 | Flag | Descrição |
 |------|-----------|
 | `-p`, `--project` | Nome do projeto |
 | `-f`, `--format` | Formato de saída: `md`, `json`, `both` |
-| `--no-llm` | Desabilitar LLM, usar extração por regras |
-| `-e`, `--enrich` | Enriquecer com dados da web (Reclame Aqui, Jusbrasil, Google) |
-| `--xlsx` | Gerar planilha Excel (.xlsx) |
+| `--no-llm` | Desabilitar LLM, usar extração por regras (só Frank) |
+| `-e`, `--enrich` | Enriquecer com dados da web (default: True) |
+| `--xlsx` | Gerar planilha Excel |
+| `--pptx` | Gerar apresentação PowerPoint |
+| `--valuation` | Rodar DCF + múltiplos + IRR + cenários |
 | `-v`, `--verbose` | Mostrar progresso detalhado |
+
+### Manual overrides (E3.5)
+
+Use quando o web enrichment falha ou quando você quer pinar números específicos.
+Cada flag preenche apenas slots vazios — não sobrescreve dados extraídos do CIM.
+
+| Flag | Descrição |
+|------|-----------|
+| `--ev-ebitda` | Múltiplo EV/EBITDA mediano do setor (ex: `11.0`) |
+| `--ev-revenue` | Múltiplo EV/Revenue mediano do setor (ex: `1.8`) |
+| `--market-size-brl-bn` | TAM em BRL Bn (ex: `12.5`) |
+| `--market-cagr` | CAGR em decimal (ex: `0.08` para 8%) |
+| `--stake-pct` | Stake do investidor (ex: `0.30` para 30%) |
+| `--entry-price` | Override do preço de entrada (BRL k) |
 
 ## Testes
 
 ```bash
-# Parser financeiro (DRE e Balanço)
-python -m tests.test_financial_parser
+# Suite completa (142 tests, ~3min)
+python -m pytest tests/ -v
 
-# Parser de PDF + classificação de páginas
-python -m tests.test_pdf_pipeline
+# Apenas regressão Frank (byte-identical)
+python -m pytest tests/test_frank_regression.py -v
 
-# Pipeline ponta a ponta
-python -m tests.test_full_dossier
+# Apenas regressão Regenera (synthetic-shaped)
+python -m pytest tests/test_regenera_regression.py -v
+
+# Smoke por fase
+python -m pytest tests/test_e3_scenarios.py     # cenários divergem
+python -m pytest tests/test_e4_irr_moic.py      # IRR/MOIC propagation
+python -m pytest tests/test_e5_visual.py        # XLSX/PPTX visual
 ```
+
+A suite cobre tanto **shape Frank** (3-entity óptica, balanços, accents)
+quanto **shape Regenera** (6-entity beleza, sem balanços, "Receita Liquida"
+sem accent, manual overrides). Frank e Regenera-synthetic baselines
+permanecem byte-identical em cada fase.
 
 ## Arquitetura
 
 ```
-PDF de entrada
+inputs (list[PDF|XLSX])
      │
      ▼
-┌──────────┐    ┌────────────┐    ┌────────────────┐    ┌──────────────┐
-│ Parsing  │───▶│ Classific. │───▶│   Extração     │───▶│ Gap Analysis │
-│ (texto + │    │ (página →  │    │ LLM (Ollama)   │    │ (o que       │
-│ tabelas) │    │  capítulo) │    │ ou regras      │    │  falta?)     │
-└──────────┘    └────────────┘    └────────────────┘    └──────────────┘
-                                                               │
-                                                               ▼
-                                                        ┌──────────────┐
-                                                        │ Enriquecim.  │
-                                                        │ Web (opcion.)│
-                                                        │ Reclame Aqui │
-                                                        │ Jusbrasil    │
-                                                        └──────┬───────┘
-                                                               │
-                                                               ▼
-                                                        ┌──────────────┐
-                                                        │  Assembly +  │
-                                                        │ Versionamento│
-                                                        │ MD/JSON/XLSX │
-                                                        └──────────────┘
+┌──────────┐    ┌────────────┐    ┌────────────────┐
+│ Parsing  │───▶│ Classific. │───▶│   Extração     │
+│ PDF +    │    │ (página →  │    │ LLM (Ollama)   │
+│ XLSX     │    │  capítulo) │    │ + regras       │
+└──────────┘    └────────────┘    └───────┬────────┘
+                                          │
+                                          ▼
+                            ┌────────────────────────┐
+                            │  Merge XLSX over PDF   │  E2
+                            └────────┬───────────────┘
+                                     │
+                                     ▼
+                            ┌────────────────────────┐
+                            │ Manual overrides       │  E3.5
+                            │ ← --ev-ebitda etc      │
+                            └────────┬───────────────┘
+                                     │
+                                     ▼
+                            ┌────────────────────────┐
+                            │ Gap analysis           │
+                            └────────┬───────────────┘
+                                     │
+                                     ▼
+                            ┌────────────────────────┐
+                            │ Web enrichment         │
+                            │ (best-effort, opcional)│
+                            └────────┬───────────────┘
+                                     │
+                                     ▼
+                            ┌────────────────────────┐
+                            │ Valuation              │
+                            │  • build_scenarios     │
+                            │  • DCF (perpetuidade   │
+                            │    + exit multiple)    │
+                            │  • Múltiplos           │
+                            │  • IRR + MOIC          │
+                            └────────┬───────────────┘
+                                     │
+                                     ▼
+                            ┌────────────────────────┐
+                            │ Exportação             │
+                            │  • Markdown            │
+                            │  • JSON                │
+                            │  • Excel (11 abas)     │
+                            │  • PowerPoint (14-15)  │
+                            └────────────────────────┘
 ```
 
 ### Estrutura do código
 
 ```
 src/
-├── models/                  # Schemas do dossiê (o contrato central)
-│   ├── evidence.py          #   TrackedField, Evidence, Gap
-│   ├── company.py           #   Profile, Timeline, Executives, Products
-│   ├── financials.py        #   DRE, Balanço, Métricas financeiras
-│   ├── market.py            #   MarketSize, Competitors, Transactions
-│   └── dossier.py           #   Dossiê raiz (junta todos os capítulos)
+├── models/                      # Schemas (TrackedField, Evidence, Gap)
+│   ├── evidence.py
+│   ├── company.py
+│   ├── financials.py            #   non_operating: bool (E1)
+│   ├── market.py                #   global_multiples_median, market_sizes
+│   └── dossier.py
 │
-├── parsers/                 # Extração de conteúdo dos arquivos
-│   ├── pdf_parser.py        #   PDF → blocos de texto limpos por página
-│   └── financial_parser.py  #   Texto de DRE/Balanço → dados estruturados
+├── parsers/                     # Extração de conteúdo
+│   ├── pdf_parser.py            #   Classifier sector-agnostic (E3.1)
+│   ├── financial_parser.py      #   PDF DRE/Balanço
+│   ├── xlsx_financial_parser.py #   XLSX → DREs (E1) + block terminator (E3.4)
+│   └── profile_parser.py        #   legal_name com filter de body tokens (E3.4)
 │
-├── pipeline/                # Orquestração do pipeline
-│   ├── classifier.py        #   Classifica páginas por capítulo
-│   ├── orchestrator.py      #   Coordena pipeline ponta a ponta
-│   ├── assembler.py         #   Gera output em Markdown e JSON
-│   ├── llm_extractor.py     #   Extração via Ollama (company, market, transaction)
-│   └── rules_extractor.py   #   Extração via regras (fallback)
+├── pipeline/                    # Orquestração
+│   ├── classifier.py            #   Sector-agnostic + structural fallback (E3.1)
+│   ├── orchestrator.py          #   run_pipeline com manual overrides (E3.5)
+│   ├── assembler.py             #   Markdown/JSON
+│   ├── llm_extractor.py
+│   └── rules_extractor.py       #   Frank-only fallback
 │
-├── llm/                     # Integração com LLM local
-│   ├── client.py            #   OllamaClient (generate, extract_json)
-│   └── prompts.py           #   8 templates de prompt em português
+├── valuation/                   # Modelo financeiro completo
+│   ├── model.py                 #   ConsolidatedModel filtra non-op (E3.3),
+│   │                            #   propaga is_projected (E4)
+│   ├── scenarios.py             #   3 cenários, _extract_dre_value accent-
+│   │                            #   insensitive (E3.3/B7), run_full_valuation
+│   ├── dcf.py                   #   Perpetuity + exit multiple
+│   └── multiples.py             #   EV/EBITDA + EV/Revenue + IRR/MOIC
 │
-├── enrichment/              # Enriquecimento via web
-│   ├── fetcher.py           #   HTTP client com rate limiting
-│   ├── sources.py           #   Scrapers: Reclame Aqui, Jusbrasil, Google
-│   └── enricher.py          #   Orquestrador de enriquecimento
+├── llm/                         # Ollama local
+│   ├── client.py
+│   └── prompts.py
 │
-├── exporters/               # Exportação para formatos profissionais
-│   └── xlsx_exporter.py     #   Excel com 10 abas formatadas
+├── enrichment/                  # Web enrichment (best-effort)
+│   ├── fetcher.py
+│   ├── sources.py               #   +3 search funcs (E3.2):
+│   │                            #     market_size, competitors, multiples
+│   └── enricher.py              #   skip-if-already-filled
 │
-├── storage/                 # Persistência
-│   └── versioning.py        #   Snapshots, listagem e diff de versões
+├── exporters/                   # Output formats
+│   ├── xlsx_exporter.py         #   11 sheets, "—" for None (E5/P7)
+│   └── pptx_exporter.py         #   accent-insensitive matcher (E5/P1),
+│                                #   conditional balance slide (E5/P6),
+│                                #   placeholder sections (E5/P5),
+│                                #   auto-derived footer page numbers
 │
-└── cli.py                   # Interface de linha de comando (typer)
+├── storage/
+│   └── versioning.py
+│
+└── cli.py                       # 5 comandos + 4 manual override flags
 
 tests/
-├── test_financial_parser.py
-├── test_pdf_pipeline.py
+├── _helpers.py                  # deep_diff, read_sheet, first_cell_diff
+├── _regenera_synthetic.py       # XLSX builder (E6)
+├── conftest.py                  # 4 session fixtures
+├── fixtures/
+│   ├── frank_baseline/          # Frank golden files
+│   └── regenera_synthetic_baseline/  # Regenera golden files (E6)
+├── test_xlsx_parser.py          # 33 tests (E1)
+├── test_e2_multi_input.py       # 11 tests (E2)
+├── test_e3_classifier.py        # 16 tests (E3.1)
+├── test_e3_scenarios.py         # 7 tests (E3.3)
+├── test_e3_4_clean.py           # 12 tests (E3.4)
+├── test_e3_2_enrichment.py      # 11 tests (E3.2)
+├── test_e3_5_overrides.py       # 9 tests (E3.5)
+├── test_e4_irr_moic.py          # 6 tests (E4)
+├── test_e5_visual.py            # 9 tests (E5)
+├── test_regenera_regression.py  # 15 tests (E6)
+├── test_frank_regression.py     # 11 tests
 ├── test_full_dossier.py
-└── debug_extraction.py
+├── test_pdf_pipeline.py
+└── test_financial_parser.py
 ```
 
-## Como funciona cada módulo
-
-### Models (`src/models/`)
-
-Definem a **forma** do dossiê. Cada dado extraído é um `TrackedField` que carrega o valor junto com sua evidência (arquivo de origem, página, trecho de texto, confiança, método de extração). O `Gap` representa uma informação esperada que não foi encontrada.
-
-O `Dossier` é o objeto raiz que contém 4 capítulos: `CompanyChapter`, `FinancialChapter`, `MarketChapter`, `TransactionChapter`, mais uma lista de `Gap`.
-
-### Parsers (`src/parsers/`)
-
-**`pdf_parser.py`** — Abre o PDF com `pdfplumber`, extrai texto de cada página, remove ruído (watermarks, color codes, headers repetidos), e classifica cada página como `content`, `financial_table`, `separator`, ou `title`.
-
-**`financial_parser.py`** — Recebe texto bruto de uma página de DRE ou Balanço e parseia em linhas estruturadas. Lida com formato financeiro brasileiro: pontos como separador de milhar (`22.575` = 22575), parênteses como negativos (`(1.896)` = -1896), vírgula como decimal em percentuais (`37,9%`), e traço duplo como zero (`--`).
-
-### LLM (`src/llm/`)
-
-**`client.py`** — Cliente para Ollama local. Envia texto ao modelo Qwen 2.5 14B e extrai JSON estruturado das respostas. Parsing robusto com fallback para regex quando o JSON vem com texto extra.
-
-**`prompts.py`** — 8 templates de prompt em português para extração de: perfil da empresa, executivos, timeline, produtos, mercado, concorrentes, múltiplos e transação. Cada prompt especifica o formato JSON esperado.
-
-### Pipeline (`src/pipeline/`)
-
-**`classifier.py`** — Mapeia cada página a um capítulo do dossiê usando regras de keywords.
-
-**`orchestrator.py`** — Coordena: parse → classify → extract (LLM ou regras) → gaps → enrich → assemble.
-
-**`llm_extractor.py`** — Extrai dados estruturados via LLM local. Genérico — funciona com qualquer CIM, não apenas Projeto Frank.
-
-**`rules_extractor.py`** — Fallback com regras hardcoded (só funciona com Projeto Frank).
-
-**`assembler.py`** — Converte o objeto `Dossier` em Markdown e JSON.
-
-### Enrichment (`src/enrichment/`)
-
-**`fetcher.py`** — HTTP client com rate limiting (2s entre requests), User-Agent realista, e decodificação de URLs de redirect do DuckDuckGo.
-
-**`sources.py`** — Scrapers para Reclame Aqui (nota, reclamações), Jusbrasil (processos), Google Reviews, e busca geral (CNPJ, sede, funcionários).
-
-**`enricher.py`** — Orquestra as buscas, envia resultados ao LLM local para extração estruturada, e preenche gaps no dossiê. **Privacidade**: apenas o nome da empresa é enviado à internet. O conteúdo do CIM nunca sai da máquina.
-
-### Exporters (`src/exporters/`)
-
-**`xlsx_exporter.py`** — Gera planilha Excel com 10 abas: Visão Geral, 3× DRE, 3× Balanço, Mercado, Transação, Gaps. Formatação profissional: projetados em itálico azul, negativos em vermelho, totais em verde, auto-width.
-
-### Storage (`src/storage/`)
-
-**`versioning.py`** — Cada execução salva um snapshot JSON com timestamp. Suporta listagem, carregamento, e diff entre versões.
-
-### CLI (`src/cli.py`)
-
-Interface via `typer` com 5 comandos: `process`, `show`, `gaps`, `versions`, `diff`. Usa `rich` para tabelas formatadas no terminal.
-
-## Privacidade e segurança
+## Privacidade e confidencialidade
 
 O sistema foi projetado para lidar com CIMs confidenciais:
 
-| Componente | Dados enviados à internet | Risco |
+| Componente | Dados que saem da máquina | Risco |
 |------------|---------------------------|-------|
-| LLM (Ollama local) | Nenhum — roda na máquina | Zero |
-| Enriquecimento web | Apenas o nome da empresa | Mínimo (equivale a googlar) |
-| Exportação Excel/JSON | Nenhum — arquivos locais | Zero |
+| LLM (Ollama local) | Nenhum | Zero |
+| Web enrichment | Apenas o nome da empresa em queries de busca | Mínimo (equivalente a googlar) |
+| Manual overrides (E3.5) | Nenhum — flags do CLI ficam locais | Zero |
+| Exportação | Nenhum | Zero |
 
-O conteúdo do CIM (financeiros, termos, cap table) **nunca** sai da sua máquina.
+**Decisão de design (E3.5):** APIs como Brave/Tavily/Serper foram avaliadas
+e rejeitadas porque enviariam o nome da empresa-alvo a terceiros junto
+com queries específicas tipo "concorrentes de X", efetivamente vazando
+qual deal você está analisando. O conteúdo do CIM (financeiros, termos,
+cap table) **nunca** sai da sua máquina.
 
-## Limitações atuais
+## Limitações conhecidas
 
-- **Concorrentes não identificados**: nomes dos concorrentes no CIM estão em logos (imagens), não em texto. O LLM os lista como "Empresa não identificada (posição N)".
-- **Marcas próprias parciais**: marcas como Armatti, Cloté, Rizz aparecem apenas em imagens do PDF.
-- **Enriquecimento web instável**: DuckDuckGo pode não retornar resultados em algumas execuções. Dados como sede e razão social podem ser de franquias individuais, não da holding.
-- **Sem valuation**: modelo financeiro, DCF, múltiplos e cenários ainda não implementados.
-- **Sem PPT**: apresentação executiva em PowerPoint ainda não implementada.
+| Item | Impacto | Mitigação |
+|------|---------|-----------|
+| DuckDuckGo bloqueio sistêmico (HTTP 403) | Web enrichment instável | Manual overrides via flags (E3.5) |
+| Concorrentes em logos/imagens no PDF | Lista parcial | Aceitar gap |
+| Marcas próprias só em imagens | Lista parcial | Aceitar gap |
+| Balanços ausentes em alguns CIMs | Slide PPT suprimido (E5/P6) | Pipeline lida graceful |
+| `_calc_irr` retorna 0.15 quando Newton não converge | Smoke signal: IRR=15.0% + MOIC=0 | E4 corrige a causa upstream |
+| Slide visual em PNG não OCRzado (Bioma timeline) | 2 de 5 eventos perdidos | Aceitar; OCR fora de escopo |
+| Timeline/produtos/executivos LLM-roleta | Counts variam 3-5 entre runs | Surfa como gap quando falha |
 
 ## Roadmap
 
 | Marco | Descrição | Status |
 |-------|-----------|--------|
-| Marco 0 | MVP: pipeline ponta a ponta, CLI, versionamento | ✅ Concluído |
-| Marco 1 | CLI com versionamento (process, show, gaps, versions, diff) | ✅ Concluído |
-| Marco 2 | LLM local na extração (Ollama + Qwen 2.5 14B) | ✅ Concluído |
-| Marco 3 | Enriquecimento web (Reclame Aqui, Jusbrasil, Google) | ✅ Concluído |
-| Marco 4a | Exportação Excel (10 abas formatadas) | ✅ Concluído (90%) |
-| Marco 4b | Exportação PPT (apresentação executiva) | ✅ Concluído (90%) |
-| Marco 5 | Valuation e cenários (DCF, múltiplos, IRR, cenários) | ✅ Concluído |
-| v1.0 | Sistema completo com interface desktop | Futuro |
+| Marco 0 | MVP: pipeline ponta a ponta | ✅ |
+| Marco 1 | CLI com versionamento | ✅ |
+| Marco 2 | LLM local (Ollama + Qwen 2.5 14B) | ✅ |
+| Marco 3 | Enriquecimento web | ✅ |
+| Marco 4a | Excel (11 abas) | ✅ |
+| Marco 4b | PowerPoint (14-15 slides) | ✅ |
+| Marco 5 | Valuation completo (DCF + Múltiplos + IRR + 3 cenários) | ✅ |
+| **E1-E6** | **Generalização: 2 golden CIMs travados, 142 tests** | ✅ |
+| Próximos | 3º CIM real, OCR, alternativa ao DDG (com confidencialidade) | Futuro |
 
 ## Dependências
 
-- `pdfplumber` — extração de texto e tabelas de PDFs
-- `typer` + `rich` — CLI com tabelas formatadas
-- `openpyxl` — geração de planilhas Excel
-- `requests` + `beautifulsoup4` — scraping web para enriquecimento
+- `pdfplumber` — PDFs (texto + tabelas)
+- `openpyxl` — XLSX (parse + export)
+- `python-pptx` + `matplotlib` — geração de slides com gráficos
+- `typer` + `rich` — CLI com tabelas no terminal
+- `requests` + `beautifulsoup4` — web scraping
 - `ollama` — LLM local (Qwen 2.5 14B) para extração inteligente
+- `pytest` — suite de testes
 
 ## Hardware recomendado
 
 - **RAM**: 32GB (mínimo 16GB)
 - **GPU**: NVIDIA com 16GB VRAM (ex: RTX 5080) para Qwen 2.5 14B
 - **Alternativa**: modelos menores (qwen2.5:7b) rodam com 8GB VRAM
+- **CPU-only**: funciona mas extração LLM fica significativamente mais lenta
