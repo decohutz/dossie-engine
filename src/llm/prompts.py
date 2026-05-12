@@ -39,28 +39,30 @@ def prompt_executives(text: str) -> tuple[str, str]:
 
 ATENÇÃO CRÍTICA sobre o layout do PDF:
 - Os nomes podem estar em COLUNAS SEPARADAS, não em linhas contínuas
-- Exemplo do layout real no PDF:
-  14+        11+         6+          10+         5+
-  Celso      Gustavo     Luis        Fábio       Cesar
-  Silva      Freitas     Oliveira    Nadruz      Lucchesi
-  (48%)      (48%)       (1%)        (2%)        (1%)
+- Exemplo ILUSTRATIVO do layout real no PDF (nomes fictícios):
+  20+        15+         8+          12+         6+
+  João       Maria       Pedro       Ana         Carlos
+  Silva      Souza       Santos      Lima        Pereira
+  (40%)      (35%)       (10%)       (10%)       (5%)
 
 - Neste exemplo, os executivos são:
-  - Celso Silva (48%), NÃO "Celso Gustavo Silva"
-  - Gustavo Freitas (48%), NÃO "Luis Freitas"
-  - Luis Oliveira (1%)
-  - Fábio Nadruz (2%)
-  - Cesar Lucchesi (1%)
+  - João Silva (40%), NÃO "João Maria Silva"
+  - Maria Souza (35%), NÃO "Pedro Souza"
+  - Pedro Santos (10%)
+  - Ana Lima (10%)
+  - Carlos Pereira (5%)
 
-- Os números acima dos nomes (14+, 11+, etc.) são ANOS DE EXPERIÊNCIA, não parte do nome
+- Os números acima dos nomes (20+, 15+, etc.) são ANOS DE EXPERIÊNCIA, não parte do nome
 - Cada COLUNA é um executivo: primeiro nome em cima, sobrenome embaixo, percentual abaixo
 - NÃO junte nomes de colunas diferentes
 
 ATENÇÃO sobre CARGOS e ENTIDADES:
-- O grupo pode ter várias entidades: Franqueadora, Distribuidora, Holding, Lojas Próprias
+- O grupo pode ter várias entidades societárias (subsidiárias, divisões, segmentos)
 - Cada executivo pode ter um cargo DIFERENTE em cada entidade
 - Se o texto mencionar a entidade junto ao cargo, INCLUA a entidade no campo "role"
-  Exemplo: "CEO da Distribuidora", "CFO da Franqueadora", "Fundador da Distribuidora e Franqueadora"
+  Exemplo genérico: "CEO da <Entidade A>", "CFO da <Entidade B>",
+  "Fundador da <Entidade A> e da <Entidade B>"
+- Use exatamente o nome da entidade que aparece no texto; não invente nomes.
 - Se uma pessoa é "Fundador", especifique de qual(is) entidade(s)
 - Cuidado: "Fundador" e "CEO" podem ser pessoas DIFERENTES
 
@@ -69,8 +71,8 @@ Retorne JSON no formato:
   "executives": [
     {{
       "name": "nome completo (primeiro nome + sobrenome da MESMA coluna)",
-      "role": "cargo na empresa (incluir entidade se mencionada, ex: CEO da Distribuidora)",
-      "entity": "qual entidade do grupo (Franqueadora, Distribuidora, Holding, etc) ou null",
+      "role": "cargo na empresa (incluir entidade se mencionada, ex: CEO da <Entidade>)",
+      "entity": "qual entidade do grupo (use o nome literal do texto) ou null",
       "tenure_years": 10,
       "ownership_pct": 48.0,
       "background": "breve descrição da experiência ou null"
@@ -143,26 +145,27 @@ def prompt_competitors(text: str) -> tuple[str, str]:
     return SYSTEM_EXTRACTION, f"""Extraia os concorrentes/competidores mencionados no texto abaixo.
 
 REGRAS IMPORTANTES:
-1. Concorrentes são REDES VAREJISTAS que competem diretamente com a empresa-alvo. 
-   Exemplos no setor óptico: Óticas Carol, Chilli Beans, Óticas Diniz, Mercadão dos Óculos.
-2. NÃO inclua fabricantes/fornecedores (HOYA, Carl Zeiss, etc.) como concorrentes a menos 
-   que eles também operem redes de lojas no Brasil.
-3. EssilorLuxottica pode ser listada SE operar lojas (Óticas Carol é do grupo EssilorLuxottica).
-   Nesse caso, use o nome da rede varejista, não do grupo industrial.
-4. Se houver TEXTO DE LOGOS/IMAGENS (seção "TEXTO ADICIONAL EXTRAÍDO"), use esses nomes 
+1. Concorrentes são empresas que competem DIRETAMENTE com a empresa-alvo no mesmo
+   segmento de mercado (mesma cadeia de valor, mesmo tipo de cliente final).
+   Infira o segmento a partir do contexto do documento.
+2. NÃO inclua fornecedores, parceiros ou fabricantes upstream a menos que eles também
+   operem no mesmo segmento que a empresa-alvo.
+3. Se um grupo industrial aparecer como "dono" de uma rede concorrente, use o nome da
+   REDE (ou marca operacional) como concorrente, não o nome do grupo industrial.
+4. Se houver TEXTO DE LOGOS/IMAGENS (seção "TEXTO ADICIONAL EXTRAÍDO"), use esses nomes
    como nomes das empresas. Logos em imagens são os nomes reais dos concorrentes.
-5. Se houver uma tabela com números (lojas, faturamento) mas sem nomes legíveis, e houver 
-   texto de OCR disponível, associe os nomes do OCR com os números pela posição (esquerda 
-   para direita).
-6. O campo "investor" é o INVESTIDOR/FUNDO que investiu naquela rede, NÃO a própria rede.
-7. Se houver logos identificados como "LOGO_1: nome", "LOGO_2: nome", etc., use esses 
+5. Se houver uma tabela com números (unidades, faturamento, market share) mas sem nomes
+   legíveis, e houver texto de OCR disponível, associe os nomes do OCR com os números
+   pela posição (esquerda para direita).
+6. O campo "investor" é o INVESTIDOR/FUNDO que investiu naquela empresa, NÃO a própria empresa.
+7. Se houver logos identificados como "LOGO_1: nome", "LOGO_2: nome", etc., use esses
    nomes na ordem correspondente aos dados numéricos.
 
 Retorne JSON no formato:
 {{
   "competitors": [
     {{
-      "name": "nome da REDE VAREJISTA (não do fabricante)",
+      "name": "nome da empresa concorrente",
       "stores": 1408,
       "revenue": 887,
       "revenue_unit": "BRL MM",
@@ -202,10 +205,26 @@ TEXTO:
 def prompt_transaction(text: str) -> tuple[str, str]:
     return SYSTEM_EXTRACTION, f"""Extraia as informações sobre a transação/deal mencionadas no texto abaixo.
 
+ATENÇÃO sobre target_stake_range:
+- É a participação que o NOVO INVESTIDOR vai adquirir, NUNCA a dos acionistas atuais
+- Em diagramas de cap table pós-transação, você tipicamente vê DOIS percentuais
+  lado a lado — um dos "Acionistas Atuais / Fundadores / Sponsors" e outro do
+  "Novo Investidor / Buyer / Incoming Partner". Use APENAS o do novo investidor.
+- Exemplos ilustrativos (valores fictícios):
+  * Diagrama: "Acionistas Atuais: >65% | Novo Investidor: <35%"
+    → target_stake_range: "<35%"           (não "<35% >65%", não ">65%")
+  * Diagrama: "Fundadores 70% / Buyer 30%"
+    → target_stake_range: "30%"            (não "70% 30%", não "70%")
+  * Texto: "aquisição de 100% das ações pela Compradora"
+    → target_stake_range: "100%"
+- Se só aparecer um lado explicitamente, use o valor como está.
+- NUNCA concatene os dois percentuais. NUNCA use o lado dos acionistas existentes.
+- Se o texto não mencionar a participação do investidor entrante, use null.
+
 Retorne JSON no formato:
 {{
   "transaction_type": "tipo da transação (ex: investimento minoritário) ou null",
-  "target_stake_range": "faixa de participação buscada (ex: <40%) ou null",
+  "target_stake_range": "faixa do NOVO INVESTIDOR (ex: <40%, 30%, 100%) ou null",
   "advisor": "nome do assessor financeiro ou null",
   "context": "contexto e objetivo da transação (1-2 frases) ou null",
   "perimeter": "o que está incluído na transação ou null",

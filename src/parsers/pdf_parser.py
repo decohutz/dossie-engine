@@ -78,22 +78,48 @@ def _clean_text(raw_text: str) -> str:
 
 
 def _classify_page(clean_text: str, tables_found: int, line_count: int) -> str:
-    """Classify a page into a type based on its content."""
+    """Classify a page into a type based on its content.
+
+    The page_type drives a downstream decision in the classifier: pages
+    typed as ``separator`` or ``title`` are skipped from chapter routing
+    (they exist only to mark section boundaries in the source PDF).
+
+    The rules below intentionally bias toward ``content`` when in doubt.
+    Earlier versions of this function aggressively promoted any page with
+    ≤5 lines of extracted text to ``title``, which worked for text-rich
+    CIMs (Frank's deck has 5+ lines on every substantive page) but was
+    catastrophic for visually-dense pitch decks (Bioma's product pages
+    have 1-5 lines of text on top of large images, and were all silently
+    discarded). Only pages with no extractable text, or with a one-word
+    title-card vibe, should bypass the classifier.
+    """
+    text = clean_text.strip()
+
+    # Empty page → separator (probably a divider slide rendered as image).
     if line_count == 0:
         return "separator"
 
-    if line_count <= 2 and not tables_found:
-        # Section title pages: "2. Mercado Óptico", "4. Operações da Companhia"
-        if re.match(r'^[\d.]+\s', clean_text.strip()):
-            return "separator"
-        return "title"
+    # Numbered section page like "2. Mercado Óptico" with at most 2 lines.
+    if line_count <= 2 and not tables_found and re.match(r'^[\d.]+\s', text):
+        return "separator"
 
-    # Financial table pages
+    # Closing/agenda dividers — pages whose entire content is a single
+    # navigational marker. Match exact tokens, not substrings, to avoid
+    # eating real content that mentions these words.
+    if line_count <= 2 and not tables_found:
+        first_word = re.sub(r"[^a-zA-ZÀ-ÿ]", "", text.split()[0]) if text.split() else ""
+        if first_word.lower() in {"obrigado", "thanks", "agenda", "índice", "sumário"}:
+            return "separator"
+
+    # Financial table pages — preserved exactly as before.
     if re.search(r'Demonstração de Resultados|Balanço Patrimonial', clean_text):
         if re.search(r'20\d{2}E?\s+20\d{2}', clean_text):
             return "financial_table"
 
-    if line_count <= 5 and tables_found == 0:
+    # Genuinely title-card pages: a single line, very short, no table.
+    # Keep this conservative — better to over-classify as content and
+    # let the classifier filter than to silently discard text we have.
+    if line_count == 1 and tables_found == 0 and len(text) < 30:
         return "title"
 
     return "content"

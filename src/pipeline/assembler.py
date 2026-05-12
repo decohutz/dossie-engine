@@ -122,13 +122,10 @@ def to_markdown(dossier: Dossier) -> str:
     lines.append("## 2. Informações financeiras")
     lines.append("")
 
-    for attr_name, label in [
-        ("dre_franqueadora", "DRE Franqueadora"),
-        ("dre_distribuidora", "DRE Distribuidora"),
-        ("dre_lojas_proprias", "DRE Lojas Próprias"),
-    ]:
-        stmt = getattr(dossier.financials, attr_name)
+    for entity in dossier.financials.entities:
+        stmt = entity.dre
         if stmt and stmt.lines:
+            label = f"DRE {entity.name}"
             lines.append(f"### {label}")
             lines.append("")
             # Header

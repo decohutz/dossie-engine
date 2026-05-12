@@ -210,10 +210,15 @@ def _write_overview_sheet(ws, dossier: Dossier):
     for label, val in fields:
         if label:
             ws.cell(row=row, column=1, value=label).font = LABEL_FONT
-        if val is not None:
-            val_cell = ws.cell(row=row, column=2, value=str(val) if val else "—")
-            val_cell.font = DATA_FONT
-            val_cell.alignment = Alignment(wrap_text=True)
+        # Always write a value cell — empty/None becomes "—" so the
+        # column doesn't render as a visual gap on a row. Previously,
+        # missing values left column 2 entirely empty for that row,
+        # which made the sheet look like fields had been skipped
+        # (vs. fields that were intentionally not extracted).
+        display = "—" if val is None or val == "" else str(val)
+        val_cell = ws.cell(row=row, column=2, value=display)
+        val_cell.font = DATA_FONT
+        val_cell.alignment = Alignment(wrap_text=True)
         row += 1
 
     # Executives
@@ -224,11 +229,18 @@ def _write_overview_sheet(ws, dossier: Dossier):
     row += 1
 
     for exec in dossier.company.executives:
-        ws.cell(row=row, column=1, value=exec.name).font = DATA_FONT
-        ws.cell(row=row, column=2, value=exec.role).font = DATA_FONT
-        pct_cell = ws.cell(row=row, column=3, value=exec.ownership_pct)
+        ws.cell(row=row, column=1, value=exec.name or "—").font = DATA_FONT
+        ws.cell(row=row, column=2, value=exec.role or "—").font = DATA_FONT
+        # Ownership % may be None (most CIMs don't disclose individual
+        # stakes) — render as "—" instead of leaving the cell blank.
+        if exec.ownership_pct is not None:
+            pct_cell = ws.cell(row=row, column=3, value=exec.ownership_pct)
+            pct_cell.number_format = (
+                '0.0%' if exec.ownership_pct < 1 else '0.0'
+            )
+        else:
+            pct_cell = ws.cell(row=row, column=3, value="—")
         pct_cell.font = DATA_FONT
-        pct_cell.number_format = '0.0%' if exec.ownership_pct and exec.ownership_pct < 1 else '0.0'
         bg_cell = ws.cell(row=row, column=4, value=exec.background or "—")
         bg_cell.font = DATA_FONT
         bg_cell.alignment = Alignment(wrap_text=True)
@@ -254,9 +266,18 @@ def _write_overview_sheet(ws, dossier: Dossier):
     row += 1
 
     for prod in dossier.company.products:
-        ws.cell(row=row, column=1, value=prod.name).font = DATA_FONT
+        ws.cell(row=row, column=1, value=prod.name or "—").font = DATA_FONT
         ws.cell(row=row, column=2, value=prod.category or "—").font = DATA_FONT
-        rev_cell = ws.cell(row=row, column=3, value=prod.revenue_share_pct)
+        # revenue_share_pct may be None (CIMs rarely break down revenue
+        # at the SKU level) — render "—" rather than leaving the cell
+        # blank, which is visually indistinguishable from missing data.
+        if prod.revenue_share_pct is not None:
+            rev_cell = ws.cell(row=row, column=3, value=prod.revenue_share_pct)
+            rev_cell.number_format = (
+                '0.0%' if prod.revenue_share_pct < 1 else '0.0'
+            )
+        else:
+            rev_cell = ws.cell(row=row, column=3, value="—")
         rev_cell.font = DATA_FONT
         ws.cell(row=row, column=4, value="Sim" if prod.is_proprietary else "Não").font = DATA_FONT
         row += 1
@@ -607,26 +628,22 @@ def export_xlsx(dossier: Dossier, output_path: str, valuation_data: dict | None 
     ws_overview.title = "Visão Geral"
     _write_overview_sheet(ws_overview, dossier)
 
-    # Sheet 2-4: DREs
+    # Sheets 2-N: one DRE sheet per entity, in discovery order
     fin = dossier.financials
-    dre_sheets = [
-        ("DRE Franqueadora", fin.dre_franqueadora),
-        ("DRE Distribuidora", fin.dre_distribuidora),
-        ("DRE Lojas Próprias", fin.dre_lojas_proprias),
-    ]
-    for title, stmt in dre_sheets:
-        ws = wb.create_sheet(title=title)
-        _write_financial_sheet(ws, stmt, title)
+    for entity in fin.entities:
+        if entity.dre is None:
+            continue
+        title = f"DRE {entity.name}"
+        ws = wb.create_sheet(title=title[:31])  # Excel caps sheet names at 31 chars
+        _write_financial_sheet(ws, entity.dre, title)
 
-    # Sheet 5-7: Balance Sheets
-    bal_sheets = [
-        ("Balanço Franqueadora", fin.balance_franqueadora),
-        ("Balanço Distribuidora", fin.balance_distribuidora),
-        ("Balanço Lojas Próprias", fin.balance_lojas_proprias),
-    ]
-    for title, stmt in bal_sheets:
-        ws = wb.create_sheet(title=title)
-        _write_financial_sheet(ws, stmt, title)
+    # Balance-sheet sheets, one per entity (skipped if balance_sheet is None)
+    for entity in fin.entities:
+        if entity.balance_sheet is None:
+            continue
+        title = f"Balanço {entity.name}"
+        ws = wb.create_sheet(title=title[:31])
+        _write_financial_sheet(ws, entity.balance_sheet, title)
 
     # Sheet 8: Market
     ws_market = wb.create_sheet(title="Mercado")

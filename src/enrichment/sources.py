@@ -171,3 +171,123 @@ def search_google_reviews(company_name: str, verbose: bool = False) -> dict | No
             }
 
     return None
+
+
+def search_market_size(
+    sector: str,
+    geography: str = "Brasil",
+    verbose: bool = False,
+) -> dict | None:
+    """Search for total addressable market data for a sector.
+
+    Two-query strategy: one for the local market (sized in BRL) and one
+    for the global market (sized in USD). Combines snippets from both
+    so the LLM can extract whichever it can pin down.
+
+    The company name is intentionally NOT included — sector-level
+    queries return better market-sizing snippets ("brazilian beauty
+    market 12 billion 2024 cagr") than company-specific ones, which
+    typically return the company's own revenue.
+    """
+    if verbose:
+        print(f"    🌐 Buscando tamanho de mercado: {sector}")
+
+    if not sector:
+        return None
+
+    queries = [
+        f"tamanho mercado {sector} {geography} bilhões CAGR",
+        f"{sector} market size {geography} CAGR 2024",
+    ]
+    snippets, urls = [], []
+    for q in queries:
+        for r in search_duckduckgo(q)[:3]:
+            if r.get("snippet"):
+                snippets.append(f"{r['title']}: {r['snippet']}")
+            if r.get("url"):
+                urls.append(r["url"])
+
+    if not snippets:
+        return None
+
+    return {
+        "text": " | ".join(snippets[:8]),
+        "url": urls[0] if urls else "",
+        "source": "market_size_search",
+    }
+
+
+def search_competitors(
+    company_name: str,
+    sector: str,
+    verbose: bool = False,
+) -> dict | None:
+    """Search for likely competitors of a company.
+
+    Combines two angles: a "who competes with X" query, and a "top
+    players in <sector>" query. Both return snippet-level results
+    that the LLM is expected to consolidate into a competitor list.
+    """
+    if verbose:
+        print(f"    🌐 Buscando concorrentes: {company_name} ({sector})")
+
+    queries = [
+        f"{company_name} concorrentes {sector}",
+        f"principais empresas {sector} Brasil ranking",
+    ]
+    if sector:
+        queries.append(f"top players {sector} brazil market share")
+
+    snippets, urls = [], []
+    for q in queries:
+        for r in search_duckduckgo(q)[:3]:
+            if r.get("snippet"):
+                snippets.append(f"{r['title']}: {r['snippet']}")
+            if r.get("url"):
+                urls.append(r["url"])
+
+    if not snippets:
+        return None
+
+    return {
+        "text": " | ".join(snippets[:10]),
+        "url": urls[0] if urls else "",
+        "source": "competitors_search",
+    }
+
+
+def search_sector_multiples(sector: str, verbose: bool = False) -> dict | None:
+    """Search for trading-multiples references for a sector.
+
+    The query targets EV/EBITDA and EV/Revenue medians as commonly
+    reported by sell-side equity research and M&A databases. Brazilian
+    multiples (PT-BR queries) often fall back to global ones since
+    sector multiples are aggregated globally — that's fine, both are
+    legitimate references for valuation triangulation.
+    """
+    if verbose:
+        print(f"    🌐 Buscando múltiplos do setor: {sector}")
+
+    if not sector:
+        return None
+
+    queries = [
+        f"{sector} EV/EBITDA múltiplo setor mediana",
+        f"{sector} sector EV/EBITDA EV/Revenue trading multiples",
+    ]
+    snippets, urls = [], []
+    for q in queries:
+        for r in search_duckduckgo(q)[:3]:
+            if r.get("snippet"):
+                snippets.append(f"{r['title']}: {r['snippet']}")
+            if r.get("url"):
+                urls.append(r["url"])
+
+    if not snippets:
+        return None
+
+    return {
+        "text": " | ".join(snippets[:8]),
+        "url": urls[0] if urls else "",
+        "source": "sector_multiples_search",
+    }

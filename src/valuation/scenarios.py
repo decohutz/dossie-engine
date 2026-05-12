@@ -121,92 +121,212 @@ def _adjust_growth(base_rate: float, factor: float) -> float:
     return base_rate * factor
 
 
+def _consolidated_metrics(consolidated: list[ProjectionYear]) -> dict:
+    """Compute projected CAGR and terminal margins from a consolidated series.
+
+    Uses the TRANSITION from last historical to last projected year for the
+    projected CAGR — this is the horizon that actually drives valuation.
+    For margins, uses the terminal projected year.
+    """
+    hist = [y for y in consolidated if not y.is_projected and y.net_revenue > 0]
+    proj = [y for y in consolidated if y.is_projected and y.net_revenue > 0]
+
+    metrics = {
+        "proj_revenue_cagr": None,     # CAGR from last hist to last proj
+        "terminal_ebitda_margin": None,
+        "terminal_cogs_pct": None,
+        "terminal_sga_pct": None,
+        "terminal_revenue": None,
+        "terminal_ebitda": None,
+        "last_hist_revenue": None,
+        "last_proj_year": None,
+    }
+
+    if proj:
+        terminal = proj[-1]
+        metrics["terminal_revenue"] = terminal.net_revenue
+        metrics["terminal_ebitda"] = terminal.ebitda
+        metrics["last_proj_year"] = terminal.year
+        if terminal.net_revenue > 0:
+            metrics["terminal_ebitda_margin"] = terminal.ebitda / terminal.net_revenue
+            # COGS and SG&A come through negative in ProjectionYear; use abs
+            metrics["terminal_cogs_pct"] = abs(terminal.cogs) / terminal.net_revenue
+            metrics["terminal_sga_pct"] = abs(terminal.sga) / terminal.net_revenue
+
+    if hist and proj and hist[-1].net_revenue > 0:
+        metrics["last_hist_revenue"] = hist[-1].net_revenue
+        n_years = len(proj)  # steps from last hist to last proj
+        start = hist[-1].net_revenue
+        end = proj[-1].net_revenue
+        if start > 0 and end > 0 and n_years > 0:
+            metrics["proj_revenue_cagr"] = (end / start) ** (1 / n_years) - 1
+    elif len(proj) >= 2 and proj[0].net_revenue > 0 and proj[-1].net_revenue > 0:
+        # Fallback: CAGR within the projected span when no history is available
+        n_years = len(proj) - 1
+        if n_years > 0:
+            metrics["proj_revenue_cagr"] = (
+                proj[-1].net_revenue / proj[0].net_revenue
+            ) ** (1 / n_years) - 1
+
+    return metrics
+
+
 def _generate_what_needs_to_be_true(
     scenario_name: str,
-    base_assumptions: ModelAssumptions,
-    scenario_assumptions: ModelAssumptions,
+    scenario_consolidated: list[ProjectionYear],
+    base_consolidated: list[ProjectionYear] | None = None,
 ) -> list[WhatNeedsToBeTrueItem]:
-    """Generate 'what needs to be true' analysis for a scenario."""
-    items = []
+    """Generate 'what needs to be true' analysis grounded in the actual
+    projected consolidated numbers of this scenario.
+
+    Args:
+        scenario_name: "Base", "Pessimista", or "Otimista"
+        scenario_consolidated: this scenario's consolidated projection
+        base_consolidated: the base-case consolidated (for delta comparisons
+            on Pessimista/Otimista). Optional for Base itself.
+    """
+    items: list[WhatNeedsToBeTrueItem] = []
+    m = _consolidated_metrics(scenario_consolidated)
+
+    # Guard: if metrics couldn't be computed, return a minimal placeholder set
+    if m["proj_revenue_cagr"] is None or m["terminal_ebitda_margin"] is None:
+        items.append(WhatNeedsToBeTrueItem(
+            category="Execução",
+            condition="Métricas projetadas insuficientes para análise quantitativa",
+            metric="data_quality",
+            value=0,
+        ))
+        return items
+
+    cagr = m["proj_revenue_cagr"]
+    margin = m["terminal_ebitda_margin"]
+    cogs_pct = m["terminal_cogs_pct"]
+    sga_pct = m["terminal_sga_pct"]
+    terminal_year = m["last_proj_year"] or "terminal"
 
     if scenario_name == "Base":
         items.append(WhatNeedsToBeTrueItem(
             category="Receita",
-            condition=f"Crescimento de receita de {base_assumptions.revenue_growth_rate*100:.1f}% a.a. se mantém",
-            metric="revenue_growth_rate",
-            value=base_assumptions.revenue_growth_rate,
+            condition=f"Receita consolidada cresce a CAGR de {cagr*100:.1f}% a.a. "
+                      f"até {terminal_year} (conforme plano da empresa)",
+            metric="proj_revenue_cagr",
+            value=cagr,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Margem",
-            condition=f"Margem COGS estabiliza em {base_assumptions.cogs_pct_revenue*100:.1f}% da receita",
-            metric="cogs_pct_revenue",
-            value=base_assumptions.cogs_pct_revenue,
+            condition=f"Margem EBITDA consolidada atinge {margin*100:.1f}% em {terminal_year} "
+                      f"(COGS {cogs_pct*100:.1f}%, SG&A {sga_pct*100:.1f}% da receita)",
+            metric="terminal_ebitda_margin",
+            value=margin,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Operacional",
-            condition=f"SG&A se mantém em {base_assumptions.sga_pct_revenue*100:.1f}% da receita",
-            metric="sga_pct_revenue",
-            value=base_assumptions.sga_pct_revenue,
+            condition="Expansão e verticalização da operação executam conforme o plano "
+                      "apresentado na CIM",
+            metric="execution",
+            value=1.0,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Mercado",
-            condition="Plano de expansão e verticalização executa conforme previsto",
-            metric="execution",
+            condition="Mercado endereçável mantém as dinâmicas de crescimento projetadas "
+                      "pelo advisor",
+            metric="market",
             value=1.0,
         ))
 
     elif scenario_name == "Pessimista":
-        growth_reduction = (1 - scenario_assumptions.revenue_growth_rate / base_assumptions.revenue_growth_rate) * 100 \
-            if base_assumptions.revenue_growth_rate else 0
+        # Delta vs base for narrative precision
+        base_m = _consolidated_metrics(base_consolidated) if base_consolidated else {}
+        base_cagr = base_m.get("proj_revenue_cagr")
+        base_margin = base_m.get("terminal_ebitda_margin")
+
+        if base_cagr is not None and base_cagr > 0:
+            cagr_delta_pp = (cagr - base_cagr) * 100
+            receita_cond = (
+                f"Receita cresce a CAGR de {cagr*100:.1f}% a.a. "
+                f"({cagr_delta_pp:+.1f}pp vs. caso Base)"
+            )
+        else:
+            receita_cond = f"Receita cresce a CAGR de {cagr*100:.1f}% a.a."
         items.append(WhatNeedsToBeTrueItem(
             category="Receita",
-            condition=f"Crescimento de receita cai {growth_reduction:.0f}% vs. plano "
-                      f"({scenario_assumptions.revenue_growth_rate*100:.1f}% a.a.)",
-            metric="revenue_growth_rate",
-            value=scenario_assumptions.revenue_growth_rate,
+            condition=receita_cond,
+            metric="proj_revenue_cagr",
+            value=cagr,
         ))
+
+        if base_margin is not None:
+            margin_delta_pp = (margin - base_margin) * 100
+            margem_cond = (
+                f"Margem EBITDA terminal comprime para {margin*100:.1f}% "
+                f"({margin_delta_pp:+.1f}pp vs. Base) por pressão em COGS/SG&A"
+            )
+        else:
+            margem_cond = f"Margem EBITDA terminal em {margin*100:.1f}% reflete pressão de custos"
         items.append(WhatNeedsToBeTrueItem(
             category="Margem",
-            condition=f"Pressão em COGS: sobe para {scenario_assumptions.cogs_pct_revenue*100:.1f}% da receita",
-            metric="cogs_pct_revenue",
-            value=scenario_assumptions.cogs_pct_revenue,
+            condition=margem_cond,
+            metric="terminal_ebitda_margin",
+            value=margin,
         ))
+
         items.append(WhatNeedsToBeTrueItem(
             category="Operacional",
-            condition="Desaceleração na expansão de lojas, atrasos em verticalização",
+            condition="Plano de expansão sofre atrasos; churn da rede persiste ou acelera",
             metric="execution",
             value=0.6,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Mercado",
-            condition="Competição intensifica ou mercado cresce abaixo do esperado",
+            condition="Intensificação competitiva ou crescimento de mercado abaixo do projetado",
             metric="market",
             value=0.7,
         ))
 
     elif scenario_name == "Otimista":
+        base_m = _consolidated_metrics(base_consolidated) if base_consolidated else {}
+        base_cagr = base_m.get("proj_revenue_cagr")
+        base_margin = base_m.get("terminal_ebitda_margin")
+
+        if base_cagr is not None and base_cagr > 0:
+            cagr_delta_pp = (cagr - base_cagr) * 100
+            receita_cond = (
+                f"Receita cresce a CAGR de {cagr*100:.1f}% a.a. "
+                f"({cagr_delta_pp:+.1f}pp vs. caso Base)"
+            )
+        else:
+            receita_cond = f"Receita cresce a CAGR de {cagr*100:.1f}% a.a."
         items.append(WhatNeedsToBeTrueItem(
             category="Receita",
-            condition=f"Crescimento acelerado: {scenario_assumptions.revenue_growth_rate*100:.1f}% a.a. "
-                      f"(+30% vs. plano)",
-            metric="revenue_growth_rate",
-            value=scenario_assumptions.revenue_growth_rate,
+            condition=receita_cond,
+            metric="proj_revenue_cagr",
+            value=cagr,
         ))
+
+        if base_margin is not None:
+            margin_delta_pp = (margin - base_margin) * 100
+            margem_cond = (
+                f"Margem EBITDA terminal expande para {margin*100:.1f}% "
+                f"({margin_delta_pp:+.1f}pp vs. Base) por ganhos de escala"
+            )
+        else:
+            margem_cond = f"Margem EBITDA terminal em {margin*100:.1f}% reflete ganhos de escala"
         items.append(WhatNeedsToBeTrueItem(
             category="Margem",
-            condition=f"Ganhos de escala: COGS cai para {scenario_assumptions.cogs_pct_revenue*100:.1f}% da receita",
-            metric="cogs_pct_revenue",
-            value=scenario_assumptions.cogs_pct_revenue,
+            condition=margem_cond,
+            metric="terminal_ebitda_margin",
+            value=margin,
         ))
+
         items.append(WhatNeedsToBeTrueItem(
             category="Operacional",
-            condition="Expansão acelerada de lojas próprias + marcas próprias ganham share",
+            condition="Expansão acelerada de lojas próprias e marcas próprias ganham share de carteira",
             metric="execution",
             value=1.3,
         ))
         items.append(WhatNeedsToBeTrueItem(
             category="Mercado",
-            condition="Mercado óptico cresce acima do esperado, consolidação favorece líderes",
+            condition="Mercado cresce acima do projetado; consolidação favorece os líderes",
             metric="market",
             value=1.3,
         ))
@@ -237,18 +357,20 @@ def build_scenarios(
     engine = ScenarioEngine()
     fin = dossier.financials
 
-    entities = [
-        ("Franqueadora", fin.dre_franqueadora),
-        ("Distribuidora", fin.dre_distribuidora),
-        ("Lojas Próprias", fin.dre_lojas_proprias),
-    ]
+    # Discover entities dynamically from the financial chapter. Each entity
+    # contributes a DRE (when available) to the consolidated projection.
+    # We capture ``non_operating`` here and propagate it to each scenario's
+    # FinancialModels — ConsolidatedModel filters non-operating entities
+    # out of the consolidated, but keeps them in the per-entity view.
+    entities = [(e.name, e.dre, e.non_operating) for e in fin.entities]
 
     # ── BASE SCENARIO (CIM projections as-is) ────────────────
     base_models = []
     base_assumptions_by_entity = {}
 
-    for name, stmt in entities:
+    for name, stmt, non_op in entities:
         model = build_entity_model(stmt, name, verbose=verbose)
+        model.non_operating = non_op
         base_models.append(model)
         base_assumptions_by_entity[name] = deepcopy(model.assumptions)
 
@@ -264,8 +386,9 @@ def build_scenarios(
     cons.build_consolidated()
     engine.base.consolidated = cons.consolidated
     engine.base.what_needs_to_be_true = _generate_what_needs_to_be_true(
-        "Base", base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
-        base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
+        "Base",
+        scenario_consolidated=engine.base.consolidated,
+        base_consolidated=engine.base.consolidated,
     )
     engine.base.compute_metrics()
 
@@ -275,7 +398,7 @@ def build_scenarios(
 
     # ── PESSIMISTIC SCENARIO ─────────────────────────────────
     pess_models = []
-    for name, stmt in entities:
+    for name, stmt, non_op in entities:
         base_a = base_assumptions_by_entity.get(name, ModelAssumptions())
         # Scale CIM projections down: revenue × pessimistic_factor, worse margins
         adj_factors = {
@@ -287,6 +410,7 @@ def build_scenarios(
             stmt, name, verbose=False, adjustment_factors=adj_factors,
         )
         model.assumptions.label = "Pessimista"
+        model.non_operating = non_op
         pess_models.append(model)
 
     engine.pessimistic = Scenario(
@@ -301,8 +425,8 @@ def build_scenarios(
     engine.pessimistic.consolidated = cons_p.consolidated
     engine.pessimistic.what_needs_to_be_true = _generate_what_needs_to_be_true(
         "Pessimista",
-        base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
-        pess_models[0].assumptions if pess_models else ModelAssumptions(),
+        scenario_consolidated=engine.pessimistic.consolidated,
+        base_consolidated=engine.base.consolidated,
     )
     engine.pessimistic.compute_metrics()
 
@@ -312,7 +436,7 @@ def build_scenarios(
 
     # ── OPTIMISTIC SCENARIO ──────────────────────────────────
     opt_models = []
-    for name, stmt in entities:
+    for name, stmt, non_op in entities:
         base_a = base_assumptions_by_entity.get(name, ModelAssumptions())
         # Scale CIM projections up: revenue × optimistic_factor, better margins
         adj_factors = {
@@ -324,6 +448,7 @@ def build_scenarios(
             stmt, name, verbose=False, adjustment_factors=adj_factors,
         )
         model.assumptions.label = "Otimista"
+        model.non_operating = non_op
         opt_models.append(model)
 
     engine.optimistic = Scenario(
@@ -338,8 +463,8 @@ def build_scenarios(
     engine.optimistic.consolidated = cons_o.consolidated
     engine.optimistic.what_needs_to_be_true = _generate_what_needs_to_be_true(
         "Otimista",
-        base_assumptions_by_entity.get("Franqueadora", ModelAssumptions()),
-        opt_models[0].assumptions if opt_models else ModelAssumptions(),
+        scenario_consolidated=engine.optimistic.consolidated,
+        base_consolidated=engine.base.consolidated,
     )
     engine.optimistic.compute_metrics()
 
@@ -366,7 +491,8 @@ def run_full_valuation(
     wacc_inputs=None,
     ev_ebitda_multiple: float | None = None,
     ev_revenue_multiple: float | None = None,
-    stake_pct: float = 0.30,
+    stake_pct: float | None = None,
+    entry_equity_value: float | None = None,
     net_debt: float = 0,
     verbose: bool = False,
 ) -> dict:
@@ -377,74 +503,143 @@ def run_full_valuation(
         wacc_inputs: WACC parameters (auto-derived if None)
         ev_ebitda_multiple: EV/EBITDA multiple (uses extracted if None)
         ev_revenue_multiple: EV/Revenue multiple (uses extracted if None)
-        stake_pct: Target investor stake
+        stake_pct: Target investor stake. If None, parsed from the
+            dossier's transaction.target_stake_range; if that also fails,
+            defaults to 0.30. Pass a float (e.g., 0.35) to override.
+        entry_equity_value: Fixed total equity value (100% basis) used as
+            the investor's entry across ALL scenarios. If None, defaults
+            to the Base-case DCF perpetuity equity value — so the Base
+            represents the "fair price today" and Pessimista/Otimista
+            test downside/upside at the same ticket. Pass a float to
+            override (e.g., a negotiated price).
         net_debt: Net debt for equity bridge
         verbose: Print progress
     """
     from .dcf import run_dcf, WACCInputs
     from .multiples import run_multiples, run_irr, build_valuation_summary
 
-    # Extract multiples from dossier if not provided
+    # Resolve multiples: explicit arg > extracted from CIM > None (with warning).
+    # Never silently fall back to sector-specific defaults — doing so would
+    # anchor the valuation of an arbitrary CIM to the optical-retail benchmarks
+    # this code was originally calibrated on.
     if ev_ebitda_multiple is None or ev_revenue_multiple is None:
         mult_data = dossier.market.global_multiples_median.value
         if isinstance(mult_data, dict):
             if ev_ebitda_multiple is None:
-                ev_ebitda_multiple = mult_data.get("ev_ebitda_median", 11.0)
+                ev_ebitda_multiple = mult_data.get("ev_ebitda_median")
             if ev_revenue_multiple is None:
-                ev_revenue_multiple = mult_data.get("ev_revenue_median", 1.8)
-        else:
-            ev_ebitda_multiple = ev_ebitda_multiple or 11.0
-            ev_revenue_multiple = ev_revenue_multiple or 1.8
+                ev_revenue_multiple = mult_data.get("ev_revenue_median")
+
+    missing = []
+    if ev_ebitda_multiple is None:
+        missing.append("EV/EBITDA")
+    if ev_revenue_multiple is None:
+        missing.append("EV/Revenue")
+    if missing:
+        import warnings, sys
+        msg = (
+            f"Múltiplos {' e '.join(missing)} não foram extraídos do CIM nem "
+            f"fornecidos explicitamente. Os métodos de valuation que dependem "
+            f"desses múltiplos (multiples comparables, exit multiple no DCF) "
+            f"serão reportados como None. Para forçar um múltiplo de referência, "
+            f"passe ev_ebitda_multiple/ev_revenue_multiple explicitamente ou "
+            f"garanta que dossier.market.global_multiples_median esteja preenchido."
+        )
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+        if verbose:
+            print(f"    ⚠️  {msg}", file=sys.stderr)
 
     if not wacc_inputs:
         wacc_inputs = WACCInputs()
 
-    # Extract stake from dossier
-    stake_range = dossier.transaction.target_stake_range.value
-    if stake_range and isinstance(stake_range, str):
-        import re
-        s = str(stake_range)
+    # ── Resolve stake_pct ─────────────────────────────────────
+    # Priority: explicit arg > parsed from dossier > fallback default
+    resolved_stake = None
+    if stake_pct is not None:
+        # Caller provided an override; use it directly (no parsing).
+        resolved_stake = stake_pct
+    else:
+        stake_range = dossier.transaction.target_stake_range.value
+        if stake_range and isinstance(stake_range, str):
+            import re
+            s = str(stake_range)
 
-        # The CIM typically says ">60% acionistas, <40% investidor"
-        # The investor stake is the one with "<" or "menor" or "minoritário"
-        # Strategy: look for <N% first (investor cap), then bare numbers
+            # The CIM typically says ">60% acionistas, <40% investidor"
+            # The investor stake is the one with "<" or "menor" or "minoritário"
 
-        # Pattern 1: explicit "<X%" — this is the investor's max stake
-        lt_match = re.search(r'<\s*(\d+)\s*%', s)
-        if lt_match:
-            parsed = int(lt_match.group(1)) / 100
-        else:
-            # Pattern 2: "até X%" or "up to X%"
-            ate_match = re.search(r'(?:até|up\s+to)\s+(\d+)\s*%', s, re.IGNORECASE)
-            if ate_match:
-                parsed = int(ate_match.group(1)) / 100
+            # Pattern 1: explicit "<X%" — this is the investor's max stake
+            lt_match = re.search(r'<\s*(\d+)\s*%', s)
+            if lt_match:
+                parsed = int(lt_match.group(1)) / 100
             else:
-                # Pattern 3: take the smallest number (likely investor stake)
-                nums = re.findall(r'(\d+)\s*%', s)
-                if nums:
-                    parsed = min(int(n) for n in nums) / 100
+                # Pattern 2: "até X%" or "up to X%"
+                ate_match = re.search(r'(?:até|up\s+to)\s+(\d+)\s*%', s, re.IGNORECASE)
+                if ate_match:
+                    parsed = int(ate_match.group(1)) / 100
                 else:
-                    parsed = stake_pct  # fallback to default
+                    # Pattern 3: take the smallest number (likely investor stake)
+                    nums = re.findall(r'(\d+)\s*%', s)
+                    if nums:
+                        parsed = min(int(n) for n in nums) / 100
+                    else:
+                        parsed = None
 
-        # Sanity check: investor stake should be 5%-50%
-        if 0.05 <= parsed <= 0.50:
-            stake_pct = parsed
-        elif parsed > 0.50:
-            # Likely picked up the majority holder's stake; use complement
-            complement = 1.0 - parsed
-            if 0.05 <= complement <= 0.50:
-                stake_pct = complement
+            if parsed is not None:
+                # Sanity check: investor stake should be 5%-50%
+                if 0.05 <= parsed <= 0.50:
+                    resolved_stake = parsed
+                elif parsed > 0.50:
+                    # Likely picked up the majority holder's stake; use complement
+                    complement = 1.0 - parsed
+                    if 0.05 <= complement <= 0.50:
+                        resolved_stake = complement
+
+    # Final fallback
+    stake_pct = resolved_stake if resolved_stake is not None else 0.30
 
     # Step 1: Build scenarios
     engine = build_scenarios(dossier, verbose=verbose)
 
+    # ── Resolve entry_equity_value ────────────────────────────
+    # If the caller didn't pass an explicit entry price, derive it from
+    # the BASE scenario's DCF. This gives us a single, consistent entry
+    # across all three scenarios — so the IRR actually measures downside
+    # vs upside (rather than "did you buy at fair value in each universe").
+    entry_source = "override" if entry_equity_value is not None else "base_dcf"
+    if entry_equity_value is None:
+        base_proj = [y for y in engine.base.consolidated if y.is_projected]
+        if not base_proj:
+            base_proj = engine.base.consolidated
+        base_dcf = run_dcf(
+            base_proj, wacc_inputs, terminal_method="perpetuity",
+            terminal_growth_rate=0.03, net_debt=net_debt, verbose=False,
+        )
+        entry_equity_value = base_dcf.bridge.equity_value
+        if entry_equity_value <= 0:
+            # Fallback: blended multiples-based equity if DCF degenerates.
+            # Only possible when both multiples are known; otherwise zero and
+            # let downstream IRR skip too.
+            if ev_ebitda_multiple is not None and ev_revenue_multiple is not None:
+                base_mult = run_multiples(
+                    base_proj, ev_ebitda_multiple, ev_revenue_multiple,
+                    net_debt=net_debt, verbose=False,
+                )
+                entry_equity_value = base_mult.equity_blended
+            else:
+                entry_equity_value = 0.0
+                entry_source = "degenerate"
+
     # Step 2: Run DCF + Multiples + IRR for each scenario
     if verbose:
         print(f"\n  [Valuation] Running DCF + Múltiplos + IRR...")
+        ebitda_str = f"{ev_ebitda_multiple}x" if ev_ebitda_multiple is not None else "N/A"
+        rev_str = f"{ev_revenue_multiple}x" if ev_revenue_multiple is not None else "N/A"
         print(f"    WACC: {wacc_inputs.wacc*100:.1f}%  |  "
-              f"EV/EBITDA: {ev_ebitda_multiple}x  |  "
-              f"EV/Revenue: {ev_revenue_multiple}x  |  "
+              f"EV/EBITDA: {ebitda_str}  |  "
+              f"EV/Revenue: {rev_str}  |  "
               f"Stake: {stake_pct*100:.0f}%")
+        print(f"    Entry (100% equity, fixed across scenarios): "
+              f"{entry_equity_value:,.0f} [{entry_source}]")
 
     summaries = []
 
@@ -456,49 +651,61 @@ def run_full_valuation(
         if not proj:
             proj = scenario.consolidated
 
-        # DCF - Perpetuity
+        # DCF - Perpetuity (always runs — doesn't need multiples)
         dcf_perp = run_dcf(
             proj, wacc_inputs, terminal_method="perpetuity",
             terminal_growth_rate=0.03, net_debt=net_debt, verbose=verbose,
         )
 
-        # DCF - Exit Multiple
-        dcf_exit = run_dcf(
-            proj, wacc_inputs, terminal_method="exit_multiple",
-            exit_multiple=ev_ebitda_multiple, net_debt=net_debt, verbose=False,
-        )
+        # DCF - Exit Multiple (only if EV/EBITDA is known)
+        dcf_exit_ev = 0.0
+        if ev_ebitda_multiple is not None:
+            dcf_exit = run_dcf(
+                proj, wacc_inputs, terminal_method="exit_multiple",
+                exit_multiple=ev_ebitda_multiple, net_debt=net_debt, verbose=False,
+            )
+            dcf_exit_ev = dcf_exit.enterprise_value
 
-        # Multiples (terminal year — for EV range)
-        mult = run_multiples(
-            proj, ev_ebitda_multiple, ev_revenue_multiple,
-            net_debt=net_debt, verbose=verbose,
-        )
+        # Multiples (only if BOTH multiples are known)
+        mult_ebitda_ev = 0.0
+        mult_rev_ev = 0.0
+        if ev_ebitda_multiple is not None and ev_revenue_multiple is not None:
+            mult = run_multiples(
+                proj, ev_ebitda_multiple, ev_revenue_multiple,
+                net_debt=net_debt, verbose=verbose,
+            )
+            mult_ebitda_ev = mult.ev_by_ebitda
+            mult_rev_ev = mult.ev_by_revenue
 
-        # IRR: entry at DCF equity value (reflects all future cash flows
-        # including growth optionality like Lojas Próprias ramp-up),
-        # exit at terminal EBITDA × multiple
-        entry_eq = dcf_perp.bridge.equity_value
-        if entry_eq <= 0:
-            entry_eq = mult.equity_blended
-
+        # IRR: FIXED entry (Base-case equity or user override) — same ticket
+        # for all three scenarios. Requires EV/EBITDA for exit proceeds.
         if verbose:
-            print(f"      Entry (DCF equity): {entry_eq:,.0f}")
+            print(f"      Entry (fixed, 100% equity): {entry_equity_value:,.0f}")
+            print(f"      Entry × stake ({stake_pct*100:.0f}%): "
+                  f"{entry_equity_value * stake_pct:,.0f}")
 
-        irr = run_irr(
-            proj, entry_equity_value=entry_eq,
-            stake_pct=stake_pct, exit_ev_ebitda=ev_ebitda_multiple,
-            net_debt_at_exit=net_debt, verbose=verbose,
-        )
+        irr_val = 0.0
+        moic_val = 0.0
+        if ev_ebitda_multiple is not None:
+            irr = run_irr(
+                proj, entry_equity_value=entry_equity_value,
+                stake_pct=stake_pct, exit_ev_ebitda=ev_ebitda_multiple,
+                net_debt_at_exit=net_debt, verbose=verbose,
+            )
+            irr_val = irr.irr
+            moic_val = irr.moic
+        elif verbose:
+            print(f"      ⏭️  IRR/MOIC puladas (EV/EBITDA ausente)")
 
         summary = build_valuation_summary(
             scenario.name,
             dcf_perp_ev=dcf_perp.enterprise_value,
-            dcf_exit_ev=dcf_exit.enterprise_value,
-            mult_ebitda_ev=mult.ev_by_ebitda,
-            mult_rev_ev=mult.ev_by_revenue,
+            dcf_exit_ev=dcf_exit_ev,
+            mult_ebitda_ev=mult_ebitda_ev,
+            mult_rev_ev=mult_rev_ev,
             net_debt=net_debt,
-            irr=irr.irr,
-            moic=irr.moic,
+            irr=irr_val,
+            moic=moic_val,
         )
         summaries.append(summary)
 
@@ -523,6 +730,8 @@ def run_full_valuation(
             "ev_ebitda_multiple": ev_ebitda_multiple,
             "ev_revenue_multiple": ev_revenue_multiple,
             "stake_pct": stake_pct,
+            "entry_equity_value": entry_equity_value,
+            "entry_source": entry_source,
             "net_debt": net_debt,
         },
     }
